@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import { submitInquiry } from "../lib/supabase";
 
 const marketFocus = [
   "Crude Oil",
@@ -125,7 +126,7 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!formData.name.trim() || !formData.email.trim() || !formData.message.trim()) {
@@ -134,9 +135,25 @@ export default function Home() {
       return;
     }
 
-    setFormStatus("success");
-    setFormFeedback("Thank you. Your inquiry has been received and we will follow up shortly.");
-    setFormData({ name: "", email: "", message: "" });
+    try {
+      await submitInquiry({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        message: formData.message.trim(),
+        source_page: "home",
+      });
+
+      setFormStatus("success");
+      setFormFeedback("Thank you. Your inquiry has been received and we will follow up shortly.");
+      setFormData({ name: "", email: "", message: "" });
+    } catch (error) {
+      setFormStatus("error");
+      setFormFeedback(
+        error instanceof Error
+          ? error.message
+          : "We were unable to submit your inquiry. Please try again shortly.",
+      );
+    }
   };
 
   const cardClasses = "transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_16px_36px_rgba(0,0,0,0.28)]";
