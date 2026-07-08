@@ -37,6 +37,8 @@ create table if not exists public.inquiries (
 
 alter table public.inquiries add column if not exists source_page text default 'home';
 alter table public.inquiries add column if not exists status text default 'new';
+alter table public.inquiries add column if not exists priority text default 'medium';
+alter table public.inquiries add column if not exists broker_notes text;
 alter table public.inquiries add column if not exists inquiry_type text;
 alter table public.inquiries add column if not exists company_name text;
 alter table public.inquiries add column if not exists contact_name text;

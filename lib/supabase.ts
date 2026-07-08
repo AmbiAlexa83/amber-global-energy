@@ -48,6 +48,25 @@ export const supabase =
       })
     : null;
 
+export async function getInquiries() {
+  if (!supabase) {
+    throw new Error("Supabase is not configured yet.");
+  }
+
+  const { data, error } = await supabase
+    .from("inquiries")
+    .select(
+      "id,name,email,message,source_page,status,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions",
+    )
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data ?? [];
+}
+
 export async function submitInquiry(payload: InquiryPayload) {
   if (!supabase) {
     throw new Error("Supabase is not configured yet.");

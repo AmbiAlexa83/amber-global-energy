@@ -96,6 +96,19 @@ const commodities = [
   { name: "LPG", detail: "Flexible LPG supply and delivery planning for industrial and commercial demand." },
 ];
 
+const documentOptions = [
+  "LOI",
+  "ICPO",
+  "SCO",
+  "FCO",
+  "POF",
+  "BCL",
+  "Company Registration",
+  "Refinery/Supplier Authorization",
+  "Passport/ID",
+  "Other",
+];
+
 type InquiryFormData = {
   inquiry_type: string;
   company_name: string;
@@ -199,6 +212,19 @@ export default function Home() {
       setFormStatus("idle");
       setFormFeedback("");
     }
+  };
+
+  const toggleDocumentSelection = (value: string) => {
+    const currentSelections = formData.documents_available
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const exists = currentSelections.includes(value);
+    const nextSelections = exists
+      ? currentSelections.filter((item) => item !== value)
+      : [...currentSelections, value];
+
+    updateField("documents_available", nextSelections.join(", "));
   };
 
   const validateCurrentStep = () => {
@@ -1029,13 +1055,31 @@ export default function Home() {
                   </label>
                 </div>
                 <label className="block text-sm text-slate-300">
-                  <span className="mb-2 block">Documents Available</span>
-                  <input
-                    value={formData.documents_available}
-                    onChange={(event) => updateField("documents_available", event.target.value)}
-                    className={inputClassName}
-                    placeholder="LOI, ICPO, Company Profile, NDA, Passport"
-                  />
+                  <span className="mb-2 block">Do you have supporting trade documents available?</span>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {documentOptions.map((option) => {
+                      const isChecked = formData.documents_available
+                        .split(",")
+                        .map((item) => item.trim())
+                        .filter(Boolean)
+                        .includes(option);
+
+                      return (
+                        <label key={option} className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#071A2D] px-4 py-3 text-sm text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleDocumentSelection(option)}
+                            className="h-4 w-4 accent-[#C8A24D]"
+                          />
+                          <span>{option}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-3 text-xs leading-6 text-slate-400">
+                    Qualified parties will receive secure upload instructions after initial review.
+                  </p>
                 </label>
                 <label className="block text-sm text-slate-300">
                   <span className="mb-2 block">Special Instructions</span>
@@ -1062,6 +1106,7 @@ export default function Home() {
                     <div><span className="text-white">Quantity:</span> {formData.quantity || "Not provided"}</div>
                     <div><span className="text-white">Target Price:</span> {formData.target_price || "Not provided"}</div>
                     <div><span className="text-white">Ports:</span> {formData.loading_port || "Not provided"} → {formData.destination_port || "Not provided"}</div>
+                    <div><span className="text-white">Documents:</span> {formData.documents_available || "None selected"}</div>
                     <div><span className="text-white">Special Instructions:</span> {formData.special_instructions || "None provided"}</div>
                   </div>
                 </div>
