@@ -7,31 +7,40 @@ type InquiryRecord = {
   name?: string | null;
   email?: string | null;
   company_name?: string | null;
+  company_registration_number?: string | null;
+  company_website?: string | null;
+  address?: string | null;
+  country?: string | null;
   contact_name?: string | null;
   position?: string | null;
   phone?: string | null;
   whatsapp?: string | null;
-  company_website?: string | null;
   inquiry_type?: string | null;
   product?: string | null;
+  grade?: string | null;
   quantity?: string | null;
   unit?: string | null;
-  country?: string | null;
   loading_port?: string | null;
   destination_port?: string | null;
   origin_country?: string | null;
   destination_country?: string | null;
+  delivery_window?: string | null;
   payment_method?: string | null;
   incoterms?: string | null;
-  currency?: string | null;
   target_price?: string | null;
-  contract_length?: string | null;
-  delivery_frequency?: string | null;
+  commission?: string | null;
+  financing_needed?: string | null;
   documents_available?: string | null;
   special_instructions?: string | null;
   status?: string | null;
   priority?: string | null;
+  assigned_broker?: string | null;
   broker_notes?: string | null;
+  reviewed_at?: string | null;
+  qualified_at?: string | null;
+  matched_at?: string | null;
+  closed_at?: string | null;
+  updated_at?: string | null;
   created_at?: string | null;
   message?: string | null;
 };
@@ -39,6 +48,7 @@ type InquiryRecord = {
 type InquiryDraft = {
   status: string;
   priority: string;
+  assigned_broker: string;
   broker_notes: string;
 };
 
@@ -46,7 +56,7 @@ const statusStyles: Record<string, string> = {
   new: "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]",
   reviewing: "border-sky-400/35 bg-sky-400/12 text-sky-200",
   qualified: "border-emerald-400/35 bg-emerald-400/12 text-emerald-200",
-  "waiting on documents": "border-violet-400/35 bg-violet-400/12 text-violet-200",
+  "awaiting documents": "border-violet-400/35 bg-violet-400/12 text-violet-200",
   matched: "border-cyan-400/35 bg-cyan-400/12 text-cyan-200",
   closed: "border-slate-400/35 bg-slate-400/12 text-slate-200",
 };
@@ -54,8 +64,8 @@ const statusStyles: Record<string, string> = {
 const statusOptions = [
   { value: "new", label: "New" },
   { value: "reviewing", label: "Reviewing" },
+  { value: "awaiting documents", label: "Awaiting Documents" },
   { value: "qualified", label: "Qualified" },
-  { value: "waiting on documents", label: "Waiting on Documents" },
   { value: "matched", label: "Matched" },
   { value: "closed", label: "Closed" },
 ];
@@ -85,8 +95,8 @@ const formatDate = (value: string | null | undefined) => {
 const normalizeStatusValue = (value?: string | null) => {
   const normalized = (value ?? "new").trim().toLowerCase();
 
-  if (normalized === "waiting_on_documents" || normalized === "waiting on documents") {
-    return "waiting on documents";
+  if (normalized === "waiting_on_documents" || normalized === "waiting on documents" || normalized === "awaiting_documents" || normalized === "awaiting documents") {
+    return "awaiting documents";
   }
 
   return normalized || "new";
@@ -107,11 +117,6 @@ const formatStatusLabel = (value?: string | null) => {
   return statusOptions.find((option) => option.value === normalized)?.label ?? "New";
 };
 
-const formatPriorityLabel = (value?: string | null) => {
-  const normalized = normalizePriorityValue(value);
-  return priorityOptions.find((option) => option.value === normalized)?.label ?? "Medium";
-};
-
 const isHighPriority = (item: InquiryRecord) => {
   const priority = normalizePriorityValue(item.priority);
   if (priority === "high") {
@@ -123,6 +128,42 @@ const isHighPriority = (item: InquiryRecord) => {
   return status === "reviewing" || status === "qualified" || status === "matched" || text.includes("urgent") || text.includes("priority");
 };
 
+const getDocumentEntries = (documentsValue?: string | null) => {
+  const rawDocuments = (documentsValue ?? "")
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const knownDocs = [
+    { key: "loi", label: "LOI" },
+    { key: "icpo", label: "ICPO" },
+    { key: "bcl", label: "BCL" },
+    { key: "passport", label: "Passport" },
+    { key: "company registration", label: "Company Registration" },
+  ];
+
+  const normalized = rawDocuments.map((item) => item.toLowerCase());
+  const text = (documentsValue ?? "").toLowerCase();
+  const defaultStatus = text.includes("pending") || text.includes("review") ? "Pending Review" : text.includes("verified") ? "Verified" : "Uploaded";
+
+  const entries = knownDocs.map((doc) => {
+    const hasMatch = normalized.some((item) => item.includes(doc.key));
+    return {
+      label: doc.label,
+      status: hasMatch ? defaultStatus : "Missing",
+    };
+  });
+
+  const extras = rawDocuments.filter((item) => !knownDocs.some((doc) => item.toLowerCase().includes(doc.key)));
+  if (extras.length) {
+    extras.forEach((item) => {
+      entries.push({ label: item, status: defaultStatus });
+    });
+  }
+
+  return entries;
+};
+
 export default function AdminPage() {
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
   const [search, setSearch] = useState("");
@@ -132,6 +173,8 @@ export default function AdminPage() {
   const [draft, setDraft] = useState<InquiryDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -188,6 +231,7 @@ export default function AdminPage() {
     setDraft({
       status: normalizeStatusValue(selectedInquiry.status),
       priority: normalizePriorityValue(selectedInquiry.priority),
+      assigned_broker: selectedInquiry.assigned_broker ?? "",
       broker_notes: selectedInquiry.broker_notes ?? "",
     });
   }, [selectedInquiry]);
@@ -228,13 +272,21 @@ export default function AdminPage() {
 
   const openInquiry = (inquiry: InquiryRecord) => {
     setSelectedInquiry(inquiry);
+    setPanelOpen(true);
+    setIsClosing(false);
     setSaveError("");
   };
 
   const closeInquiry = () => {
-    setSelectedInquiry(null);
-    setDraft(null);
-    setSaveError("");
+    setIsClosing(true);
+
+    window.setTimeout(() => {
+      setSelectedInquiry(null);
+      setDraft(null);
+      setSaveError("");
+      setPanelOpen(false);
+      setIsClosing(false);
+    }, 220);
   };
 
   const updateDraftField = <K extends keyof InquiryDraft>(field: K, value: InquiryDraft[K]) => {
@@ -259,6 +311,7 @@ export default function AdminPage() {
           id: selectedInquiry.id,
           status: draft.status,
           priority: draft.priority,
+          assigned_broker: draft.assigned_broker,
           broker_notes: draft.broker_notes,
         }),
       });
@@ -272,6 +325,7 @@ export default function AdminPage() {
         ...selectedInquiry,
         status: draft.status,
         priority: draft.priority,
+        assigned_broker: draft.assigned_broker,
         broker_notes: draft.broker_notes,
       };
 
@@ -284,6 +338,18 @@ export default function AdminPage() {
       setSaving(false);
     }
   };
+
+  const panelVisible = Boolean(selectedInquiry || panelOpen);
+  const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
+  const timelineEntries = [
+    { label: "Inquiry Submitted", value: selectedInquiry?.created_at },
+    { label: "Assigned", value: selectedInquiry?.updated_at },
+    { label: "Reviewed", value: selectedInquiry?.reviewed_at },
+    { label: "Qualified", value: selectedInquiry?.qualified_at },
+    { label: "Matched", value: selectedInquiry?.matched_at },
+    { label: "Closed", value: selectedInquiry?.closed_at },
+    { label: "Last Updated", value: selectedInquiry?.updated_at ?? selectedInquiry?.created_at },
+  ];
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(200,162,77,0.13),_transparent_28%),linear-gradient(135deg,_#03070D_0%,_#071A2D_65%,_#02060D_100%)] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
@@ -404,168 +470,201 @@ export default function AdminPage() {
         </section>
       </div>
 
-      {selectedInquiry ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-[28px] border border-white/10 bg-[#050B16]/95 p-6 shadow-[0_30px_100px_rgba(0,0,0,0.7)]">
+      {panelVisible ? (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm" onClick={closeInquiry}>
+          <div
+            className={`h-full w-full max-w-3xl overflow-y-auto border-l border-white/10 bg-[#050B16]/95 p-6 shadow-[0_30px_100px_rgba(0,0,0,0.7)] transition-transform duration-300 ease-out ${isClosing ? "translate-x-full" : "translate-x-0"}`}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="flex flex-col gap-4 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-sm uppercase tracking-[0.3em] text-[#C8A24D]">Inquiry detail</p>
-                <h3 className="mt-2 text-2xl font-semibold text-white">{formatValue(selectedInquiry.contact_name ?? selectedInquiry.name)}</h3>
-                <p className="mt-1 text-sm text-slate-400">{formatValue(selectedInquiry.company_name)}</p>
+                <p className="text-sm uppercase tracking-[0.3em] text-[#C8A24D]">Executive Deal Workspace</p>
+                <h3 className="mt-2 text-2xl font-semibold text-white">{formatValue(selectedInquiry?.contact_name ?? selectedInquiry?.name)}</h3>
+                <p className="mt-1 text-sm text-slate-400">{formatValue(selectedInquiry?.company_name)}</p>
               </div>
               <button
                 type="button"
                 onClick={closeInquiry}
                 className="rounded-full border border-white/10 bg-[#071A2D] px-3 py-2 text-sm text-slate-300 transition hover:border-[#C8A24D]/40 hover:text-white"
               >
-                Close
+                ×
               </button>
             </div>
 
-            <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-              <div className="space-y-4">
-                <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
-                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Company & contact</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {[
-                      ["Company", selectedInquiry.company_name],
-                      ["Contact", selectedInquiry.contact_name],
-                      ["Position", selectedInquiry.position],
-                      ["Email", selectedInquiry.email],
-                      ["Phone", selectedInquiry.phone],
-                      ["WhatsApp", selectedInquiry.whatsapp],
-                      ["Website", selectedInquiry.company_website],
-                      ["Country", selectedInquiry.country],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                        <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
-                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Product & logistics</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {[
-                      ["Inquiry Type", selectedInquiry.inquiry_type],
-                      ["Product", selectedInquiry.product],
-                      ["Quantity", selectedInquiry.quantity],
-                      ["Unit", selectedInquiry.unit],
-                      ["Loading Port", selectedInquiry.loading_port],
-                      ["Destination Port", selectedInquiry.destination_port],
-                      ["Origin Country", selectedInquiry.origin_country],
-                      ["Destination Country", selectedInquiry.destination_country],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                        <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
-                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Commercial terms</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {[
-                      ["Payment Terms", selectedInquiry.payment_method],
-                      ["Incoterms", selectedInquiry.incoterms],
-                      ["Currency", selectedInquiry.currency],
-                      ["Target Price", selectedInquiry.target_price],
-                      ["Contract Length", selectedInquiry.contract_length],
-                      ["Delivery Frequency", selectedInquiry.delivery_frequency],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                        <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
-                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Documents & instructions</p>
-                  <div className="mt-3 space-y-3 text-sm text-slate-200">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Documents available</p>
-                      <p className="mt-1">{formatValue(selectedInquiry.documents_available)}</p>
+            <div className="mt-6 space-y-4">
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Company Information</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ["Company Name", selectedInquiry?.company_name],
+                    ["Company Registration", selectedInquiry?.company_registration_number],
+                    ["Company Website", selectedInquiry?.company_website],
+                    ["Country", selectedInquiry?.country],
+                    ["Address", selectedInquiry?.address],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+                      <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
                     </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Special instructions</p>
-                      <p className="mt-1 whitespace-pre-wrap">{formatValue(selectedInquiry.special_instructions)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Initial message</p>
-                      <p className="mt-1 whitespace-pre-wrap">{formatValue(selectedInquiry.message)}</p>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
-                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Workflow controls</p>
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Status</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Primary Contact</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ["Full Name", selectedInquiry?.contact_name],
+                    ["Email", selectedInquiry?.email],
+                    ["Phone", selectedInquiry?.phone],
+                    ["WhatsApp", selectedInquiry?.whatsapp],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+                      <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Trade Information</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ["Inquiry Type", selectedInquiry?.inquiry_type],
+                    ["Product", selectedInquiry?.product],
+                    ["Grade", selectedInquiry?.grade],
+                    ["Quantity", selectedInquiry?.quantity],
+                    ["Unit", selectedInquiry?.unit],
+                    ["Destination Port", selectedInquiry?.destination_port],
+                    ["Destination Country", selectedInquiry?.destination_country],
+                    ["Delivery Window", selectedInquiry?.delivery_window],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+                      <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Commercial Terms</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ["Payment Terms", selectedInquiry?.payment_method],
+                    ["Incoterms", selectedInquiry?.incoterms],
+                    ["Target Price", selectedInquiry?.target_price],
+                    ["Commission", selectedInquiry?.commission],
+                    ["Financing Needed", selectedInquiry?.financing_needed],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+                      <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Documents</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {documentEntries.map((document) => (
+                    <div key={document.label} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm text-slate-200">{document.label}</p>
+                        <span className="rounded-full border border-[#C8A24D]/25 bg-[#C8A24D]/12 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#F0D38A]">
+                          {document.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Special Instructions</p>
+                <p className="mt-3 whitespace-pre-wrap text-sm text-slate-200">{formatValue(selectedInquiry?.special_instructions)}</p>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Broker Workflow</p>
+                <div className="mt-4 grid gap-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label>
+                      <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Status</span>
+                      <select
+                        value={draft?.status ?? "new"}
+                        onChange={(event) => updateDraftField("status", event.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
+                      >
                         {statusOptions.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => updateDraftField("status", option.value)}
-                            className={`rounded-full border px-2.5 py-1.5 text-xs uppercase tracking-[0.2em] transition ${draft?.status === option.value ? "border-[#C8A24D]/70 bg-[#C8A24D]/18 text-[#F0D38A]" : "border-white/10 bg-[#050B16] text-slate-300 hover:border-[#C8A24D]/35"}`}
-                          >
+                          <option key={option.value} value={option.value} className="bg-[#050B16] text-white">
                             {option.label}
-                          </button>
+                          </option>
                         ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Priority</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      </select>
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Priority</span>
+                      <select
+                        value={draft?.priority ?? "medium"}
+                        onChange={(event) => updateDraftField("priority", event.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
+                      >
                         {priorityOptions.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => updateDraftField("priority", option.value)}
-                            className={`rounded-full border px-2.5 py-1.5 text-xs uppercase tracking-[0.2em] transition ${draft?.priority === option.value ? "border-sky-400/70 bg-sky-400/12 text-sky-200" : "border-white/10 bg-[#050B16] text-slate-300 hover:border-sky-400/35"}`}
-                          >
+                          <option key={option.value} value={option.value} className="bg-[#050B16] text-white">
                             {option.label}
-                          </button>
+                          </option>
                         ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-xs uppercase tracking-[0.2em] text-slate-500" htmlFor="broker-notes">
-                        Broker notes
-                      </label>
-                      <textarea
-                        id="broker-notes"
-                        value={draft?.broker_notes ?? ""}
-                        onChange={(event) => updateDraftField("broker_notes", event.target.value)}
-                        rows={6}
-                        placeholder="Add internal notes for the broker team..."
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-[#071A2D] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
-                      />
-                    </div>
+                      </select>
+                    </label>
                   </div>
 
-                  {saveError ? <p className="mt-3 text-sm text-rose-200">{saveError}</p> : null}
+                  <label>
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Assigned Broker</span>
+                    <input
+                      value={draft?.assigned_broker ?? ""}
+                      onChange={(event) => updateDraftField("assigned_broker", event.target.value)}
+                      placeholder="Assign a broker"
+                      className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
+                    />
+                  </label>
 
-                  <button
-                    type="button"
-                    onClick={saveInquiry}
-                    disabled={saving}
-                    className="mt-4 w-full rounded-xl border border-[#C8A24D]/35 bg-[#C8A24D]/16 px-4 py-3 text-sm font-medium text-[#F0D38A] transition hover:bg-[#C8A24D]/24 disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {saving ? "Saving..." : "Save updates"}
-                  </button>
+                  <label>
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Internal Broker Notes</span>
+                    <textarea
+                      value={draft?.broker_notes ?? ""}
+                      onChange={(event) => updateDraftField("broker_notes", event.target.value)}
+                      rows={7}
+                      placeholder="Add private notes for the internal deal team..."
+                      className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
+                    />
+                  </label>
+
+                  <div className="rounded-[24px] border border-white/10 bg-[#050B16]/70 p-4">
+                    <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Workflow Timeline</p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {timelineEntries.map((entry) => (
+                        <div key={entry.label}>
+                          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{entry.label}</p>
+                          <p className="mt-1 text-sm text-slate-200">{formatDate(entry.value)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+
+                {saveError ? <p className="mt-3 text-sm text-rose-200">{saveError}</p> : null}
+
+                <button
+                  type="button"
+                  onClick={saveInquiry}
+                  disabled={saving}
+                  className="mt-4 w-full rounded-xl border border-[#C8A24D]/35 bg-[#C8A24D]/16 px-4 py-3 text-sm font-medium text-[#F0D38A] transition hover:bg-[#C8A24D]/24 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
               </div>
             </div>
           </div>

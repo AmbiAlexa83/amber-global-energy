@@ -14,13 +14,13 @@ export async function GET() {
 export async function PATCH(request: Request) {
   try {
     const payload = await request.json().catch(() => null);
-    const { id, status, priority, broker_notes } = payload ?? {};
+    const { id, status, priority, assigned_broker, broker_notes } = payload ?? {};
 
     if (!id) {
       return NextResponse.json({ error: "Inquiry id is required." }, { status: 400 });
     }
 
-    const updatedInquiry = await updateInquiryServer(id, { status, priority, broker_notes });
+    const updatedInquiry = await updateInquiryServer(id, { status, priority, assigned_broker, broker_notes });
     return NextResponse.json({ data: updatedInquiry });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save inquiry updates.";

@@ -18,17 +18,62 @@ export type InquiryServerRecord = {
   name?: string | null;
   email?: string | null;
   company_name?: string | null;
+  company_registration_number?: string | null;
+  company_website?: string | null;
+  address?: string | null;
+  country?: string | null;
   contact_name?: string | null;
   inquiry_type?: string | null;
   product?: string | null;
+  grade?: string | null;
   quantity?: string | null;
-  country?: string | null;
+  unit?: string | null;
+  destination_port?: string | null;
+  destination_country?: string | null;
+  delivery_window?: string | null;
+  payment_method?: string | null;
+  incoterms?: string | null;
+  target_price?: string | null;
+  commission?: string | null;
+  financing_needed?: string | null;
+  documents_available?: string | null;
+  special_instructions?: string | null;
   status?: string | null;
   priority?: string | null;
+  assigned_broker?: string | null;
   broker_notes?: string | null;
+  reviewed_at?: string | null;
+  qualified_at?: string | null;
+  matched_at?: string | null;
+  closed_at?: string | null;
+  updated_at?: string | null;
   created_at?: string | null;
   message?: string | null;
-  special_instructions?: string | null;
+};
+
+const parseBrokerState = (brokerNotes?: string | null) => {
+  const raw = brokerNotes?.trim() ?? "";
+  const assignedMatch = raw.match(/^Assigned Broker:\s*(.+)$/im);
+
+  if (!assignedMatch) {
+    return { assigned_broker: null, broker_notes: raw || null };
+  }
+
+  const assigned_broker = assignedMatch[1].trim() || null;
+  const broker_notes = raw.replace(/^Assigned Broker:\s*.+$/im, "").trim() || null;
+
+  return { assigned_broker, broker_notes };
+};
+
+const serializeBrokerState = (assignedBroker?: string | null, brokerNotes?: string | null) => {
+  const trimmedBroker = assignedBroker?.trim();
+  const trimmedNotes = brokerNotes?.trim();
+
+  if (!trimmedBroker && !trimmedNotes) {
+    return null;
+  }
+
+  return [trimmedBroker ? `Assigned Broker: ${trimmedBroker}` : null, trimmedNotes].filter(Boolean).join("\n\n");
 };
 
 export async function getInquiriesServer() {
@@ -39,7 +84,7 @@ export async function getInquiriesServer() {
   const { data, error } = await supabaseServer
     .from("inquiries")
     .select(
-      "id,name,email,message,source_page,status,priority,broker_notes,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,delivery_frequency,contract_length,target_price,currency,payment_method,incoterms,loading_port,destination_port,origin_country,destination_country,documents_available,special_instructions",
+      "id,name,email,message,source_page,status,priority,broker_notes,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions",
     )
     .order("created_at", { ascending: false });
 
@@ -47,10 +92,20 @@ export async function getInquiriesServer() {
     throw new Error(error.message);
   }
 
-  return data ?? [];
+  return (data ?? []).map((item) => {
+    const parsed = parseBrokerState(item.broker_notes);
+    return {
+      ...item,
+      assigned_broker: parsed.assigned_broker,
+      broker_notes: parsed.broker_notes,
+    };
+  });
 }
 
-export async function updateInquiryServer(id: string | number, updates: { status?: string | null; priority?: string | null; broker_notes?: string | null }) {
+export async function updateInquiryServer(
+  id: string | number,
+  updates: { status?: string | null; priority?: string | null; assigned_broker?: string | null; broker_notes?: string | null },
+) {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
   }
@@ -65,8 +120,8 @@ export async function updateInquiryServer(id: string | number, updates: { status
     updatePayload.priority = updates.priority ?? null;
   }
 
-  if (updates.broker_notes !== undefined) {
-    updatePayload.broker_notes = updates.broker_notes ?? null;
+  if (updates.broker_notes !== undefined || updates.assigned_broker !== undefined) {
+    updatePayload.broker_notes = serializeBrokerState(updates.assigned_broker, updates.broker_notes) ?? null;
   }
 
   const { data, error } = await supabaseServer
@@ -74,7 +129,7 @@ export async function updateInquiryServer(id: string | number, updates: { status
     .update(updatePayload)
     .eq("id", id)
     .select(
-      "id,name,email,message,source_page,status,priority,broker_notes,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,delivery_frequency,contract_length,target_price,currency,payment_method,incoterms,loading_port,destination_port,origin_country,destination_country,documents_available,special_instructions",
+      "id,name,email,message,source_page,status,priority,broker_notes,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions",
     )
     .single();
 
@@ -82,5 +137,10 @@ export async function updateInquiryServer(id: string | number, updates: { status
     throw new Error(error.message);
   }
 
-  return data;
+  const parsed = parseBrokerState(data?.broker_notes);
+  return {
+    ...data,
+    assigned_broker: parsed.assigned_broker,
+    broker_notes: parsed.broker_notes,
+  };
 }
