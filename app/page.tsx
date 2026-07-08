@@ -96,9 +96,73 @@ const commodities = [
   { name: "LPG", detail: "Flexible LPG supply and delivery planning for industrial and commercial demand." },
 ];
 
+type InquiryFormData = {
+  inquiry_type: string;
+  company_name: string;
+  contact_name: string;
+  position: string;
+  email: string;
+  phone: string;
+  whatsapp: string;
+  company_website: string;
+  country: string;
+  company_registration_number: string;
+  verification_status: string;
+  role_type: string;
+  product: string;
+  quantity: string;
+  unit: string;
+  delivery_frequency: string;
+  contract_length: string;
+  target_price: string;
+  currency: string;
+  payment_method: string;
+  incoterms: string;
+  loading_port: string;
+  destination_port: string;
+  origin_country: string;
+  destination_country: string;
+  shipping_method: string;
+  documents_available: string;
+  special_instructions: string;
+};
+
+const initialFormData: InquiryFormData = {
+  inquiry_type: "",
+  company_name: "",
+  contact_name: "",
+  position: "",
+  email: "",
+  phone: "",
+  whatsapp: "",
+  company_website: "",
+  country: "",
+  company_registration_number: "",
+  verification_status: "",
+  role_type: "",
+  product: "",
+  quantity: "",
+  unit: "",
+  delivery_frequency: "",
+  contract_length: "",
+  target_price: "",
+  currency: "",
+  payment_method: "",
+  incoterms: "",
+  loading_port: "",
+  destination_port: "",
+  origin_country: "",
+  destination_country: "",
+  shipping_method: "",
+  documents_available: "",
+  special_instructions: "",
+};
+
 export default function Home() {
   const [visibleSections, setVisibleSections] = useState<string[]>([]);
-  const [formData, setFormData] = useState({ name: "", email: "", message: "" });
+  const [currentStep, setCurrentStep] = useState(1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formData, setFormData] = useState<InquiryFormData>(initialFormData);
   const [formStatus, setFormStatus] = useState<"idle" | "success" | "error">("idle");
   const [formFeedback, setFormFeedback] = useState("");
 
@@ -126,26 +190,120 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const inputClassName =
+    "w-full rounded-xl border border-white/15 bg-[#071A2D] px-4 py-3 text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/35 placeholder:text-slate-500";
 
-    if (!formData.name.trim() || !formData.email.trim() || !formData.message.trim()) {
+  const updateField = (field: keyof InquiryFormData, value: string) => {
+    setFormData((current) => ({ ...current, [field]: value }));
+    if (formStatus !== "idle") {
+      setFormStatus("idle");
+      setFormFeedback("");
+    }
+  };
+
+  const validateCurrentStep = () => {
+    if (currentStep === 1) {
+      return Boolean(
+        formData.inquiry_type.trim() &&
+          formData.company_name.trim() &&
+          formData.contact_name.trim() &&
+          formData.email.trim() &&
+          formData.phone.trim() &&
+          formData.country.trim(),
+      );
+    }
+
+    if (currentStep === 2) {
+      return Boolean(
+        formData.role_type.trim() &&
+          formData.product.trim() &&
+          formData.quantity.trim() &&
+          formData.unit.trim() &&
+          formData.currency.trim(),
+      );
+    }
+
+    if (currentStep === 3) {
+      return Boolean(
+        formData.incoterms.trim() &&
+          formData.loading_port.trim() &&
+          formData.destination_port.trim() &&
+          formData.origin_country.trim() &&
+          formData.destination_country.trim(),
+      );
+    }
+
+    return true;
+  };
+
+  const handleNext = () => {
+    if (!validateCurrentStep()) {
       setFormStatus("error");
-      setFormFeedback("Please complete all fields before submitting your inquiry.");
+      setFormFeedback("Please complete the required fields before continuing.");
       return;
     }
 
+    setFormStatus("idle");
+    setFormFeedback("");
+    setCurrentStep((step) => Math.min(step + 1, 4));
+  };
+
+  const handleBack = () => {
+    setFormStatus("idle");
+    setFormFeedback("");
+    setCurrentStep((step) => Math.max(step - 1, 1));
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!validateCurrentStep()) {
+      setFormStatus("error");
+      setFormFeedback("Please complete all required fields before submitting your inquiry.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
     try {
       await submitInquiry({
-        name: formData.name.trim(),
+        name: formData.contact_name.trim() || formData.company_name.trim(),
         email: formData.email.trim(),
-        message: formData.message.trim(),
+        message: formData.special_instructions.trim() || `Trade inquiry for ${formData.company_name.trim() || "new mandate"}`,
         source_page: "home",
+        inquiry_type: formData.inquiry_type.trim(),
+        company_name: formData.company_name.trim(),
+        contact_name: formData.contact_name.trim(),
+        position: formData.position.trim(),
+        phone: formData.phone.trim(),
+        whatsapp: formData.whatsapp.trim(),
+        company_website: formData.company_website.trim(),
+        country: formData.country.trim(),
+        company_registration_number: formData.company_registration_number.trim(),
+        verification_status: formData.verification_status.trim(),
+        role_type: formData.role_type.trim(),
+        product: formData.product.trim(),
+        quantity: formData.quantity.trim(),
+        unit: formData.unit.trim(),
+        delivery_frequency: formData.delivery_frequency.trim(),
+        contract_length: formData.contract_length.trim(),
+        target_price: formData.target_price.trim(),
+        currency: formData.currency.trim(),
+        payment_method: formData.payment_method.trim(),
+        incoterms: formData.incoterms.trim(),
+        loading_port: formData.loading_port.trim(),
+        destination_port: formData.destination_port.trim(),
+        origin_country: formData.origin_country.trim(),
+        destination_country: formData.destination_country.trim(),
+        shipping_method: formData.shipping_method.trim(),
+        documents_available: formData.documents_available.trim(),
+        special_instructions: formData.special_instructions.trim(),
       });
 
       setFormStatus("success");
-      setFormFeedback("Thank you. Your inquiry has been received and we will follow up shortly.");
-      setFormData({ name: "", email: "", message: "" });
+      setFormFeedback("Thank you. Your trade inquiry has been received and our team will follow up shortly.");
+      setFormData(initialFormData);
+      setCurrentStep(1);
     } catch (error) {
       setFormStatus("error");
       setFormFeedback(
@@ -153,6 +311,8 @@ export default function Home() {
           ? error.message
           : "We were unable to submit your inquiry. Please try again shortly.",
       );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -493,66 +653,23 @@ export default function Home() {
           </div>
 
           <form className="space-y-4 rounded-[1.5rem] border border-white/10 bg-white/5 p-6" onSubmit={handleSubmit} noValidate>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-sm text-slate-300" htmlFor="name">
-                <span className="mb-2 block">Name</span>
-                <input
-                  id="name"
-                  name="name"
-                  type="text"
-                  value={formData.name}
-                  onChange={(event) => {
-                    setFormData((current) => ({ ...current, name: event.target.value }));
-                    if (formStatus !== "idle") {
-                      setFormStatus("idle");
-                      setFormFeedback("");
-                    }
-                  }}
-                  className="w-full rounded-xl border border-white/15 bg-[#071A2D] px-4 py-3 text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/35 placeholder:text-slate-500"
-                  placeholder="Your name"
-                  autoComplete="name"
-                  aria-label="Name"
-                />
-              </label>
-              <label className="text-sm text-slate-300" htmlFor="email">
-                <span className="mb-2 block">Email</span>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(event) => {
-                    setFormData((current) => ({ ...current, email: event.target.value }));
-                    if (formStatus !== "idle") {
-                      setFormStatus("idle");
-                      setFormFeedback("");
-                    }
-                  }}
-                  className="w-full rounded-xl border border-white/15 bg-[#071A2D] px-4 py-3 text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/35 placeholder:text-slate-500"
-                  placeholder="you@company.com"
-                  autoComplete="email"
-                  aria-label="Email"
-                />
-              </label>
+            <div className="flex flex-wrap items-center gap-2">
+              {[1, 2, 3, 4].map((step) => (
+                <div key={step} className="flex items-center gap-2">
+                  <div
+                    className={`flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold ${
+                      currentStep >= step
+                        ? "border-[#C8A24D] bg-[#C8A24D]/15 text-[#C8A24D]"
+                        : "border-white/15 bg-transparent text-slate-400"
+                    }`}
+                  >
+                    {step}
+                  </div>
+                  {step < 4 ? <div className="h-px w-4 bg-white/10" /> : null}
+                </div>
+              ))}
             </div>
-            <label className="block text-sm text-slate-300" htmlFor="message">
-              <span className="mb-2 block">How can we assist?</span>
-              <textarea
-                id="message"
-                name="message"
-                value={formData.message}
-                onChange={(event) => {
-                  setFormData((current) => ({ ...current, message: event.target.value }));
-                  if (formStatus !== "idle") {
-                    setFormStatus("idle");
-                    setFormFeedback("");
-                  }
-                }}
-                className="min-h-32 w-full rounded-xl border border-white/15 bg-[#071A2D] px-4 py-3 text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/35 placeholder:text-slate-500"
-                placeholder="Describe your buyer, supplier, or commercial requirement."
-                aria-label="Message"
-              />
-            </label>
+
             {formFeedback ? (
               <p
                 aria-live="polite"
@@ -561,12 +678,424 @@ export default function Home() {
                 {formFeedback}
               </p>
             ) : null}
-            <button
-              type="submit"
-              className="w-full rounded-full bg-[#C8A24D] px-5 py-3 text-sm font-semibold text-[#071A2D] transition hover:bg-[#d8b56a] focus:outline-none focus:ring-2 focus:ring-[#C8A24D]/40"
-            >
-              Submit inquiry
-            </button>
+
+            {currentStep === 1 ? (
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Inquiry Type</span>
+                    <select
+                      value={formData.inquiry_type}
+                      onChange={(event) => updateField("inquiry_type", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select an inquiry type</option>
+                      <option value="Buy Fuel">Buy Fuel</option>
+                      <option value="Sell Fuel">Sell Fuel</option>
+                      <option value="Need Broker">Need Broker</option>
+                      <option value="Looking for Supplier">Looking for Supplier</option>
+                      <option value="Looking for Buyer">Looking for Buyer</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Company Name</span>
+                    <input
+                      value={formData.company_name}
+                      onChange={(event) => updateField("company_name", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Company name"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Contact Name</span>
+                    <input
+                      value={formData.contact_name}
+                      onChange={(event) => updateField("contact_name", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Contact name"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Position</span>
+                    <input
+                      value={formData.position}
+                      onChange={(event) => updateField("position", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Your title"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Email</span>
+                    <input
+                      type="email"
+                      value={formData.email}
+                      onChange={(event) => updateField("email", event.target.value)}
+                      className={inputClassName}
+                      placeholder="you@company.com"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Phone</span>
+                    <input
+                      value={formData.phone}
+                      onChange={(event) => updateField("phone", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Phone number"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">WhatsApp</span>
+                    <input
+                      value={formData.whatsapp}
+                      onChange={(event) => updateField("whatsapp", event.target.value)}
+                      className={inputClassName}
+                      placeholder="WhatsApp number"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Company Website</span>
+                    <input
+                      value={formData.company_website}
+                      onChange={(event) => updateField("company_website", event.target.value)}
+                      className={inputClassName}
+                      placeholder="https://company.com"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Country</span>
+                    <input
+                      value={formData.country}
+                      onChange={(event) => updateField("country", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Country"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Company Registration Number</span>
+                    <input
+                      value={formData.company_registration_number}
+                      onChange={(event) => updateField("company_registration_number", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Registration number"
+                    />
+                  </label>
+                </div>
+                <label className="block text-sm text-slate-300">
+                  <span className="mb-2 block">Verification Status</span>
+                  <select
+                    value={formData.verification_status}
+                    onChange={(event) => updateField("verification_status", event.target.value)}
+                    className={inputClassName}
+                  >
+                    <option value="">Select a status</option>
+                    <option value="Verified">Verified</option>
+                    <option value="Not Verified">Not Verified</option>
+                    <option value="In Progress">In Progress</option>
+                  </select>
+                </label>
+              </div>
+            ) : null}
+
+            {currentStep === 2 ? (
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Role Type</span>
+                    <select
+                      value={formData.role_type}
+                      onChange={(event) => updateField("role_type", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select role type</option>
+                      <option value="Buyer">Buyer</option>
+                      <option value="Seller">Seller</option>
+                      <option value="Buyer Mandate">Buyer Mandate</option>
+                      <option value="Seller Mandate">Seller Mandate</option>
+                      <option value="Refinery">Refinery</option>
+                      <option value="Distributor">Distributor</option>
+                      <option value="End Buyer">End Buyer</option>
+                      <option value="Government Agency">Government Agency</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Product</span>
+                    <select
+                      value={formData.product}
+                      onChange={(event) => updateField("product", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select product</option>
+                      <option value="Jet A1">Jet A1</option>
+                      <option value="EN590 Diesel">EN590 Diesel</option>
+                      <option value="D6">D6</option>
+                      <option value="Crude Oil">Crude Oil</option>
+                      <option value="LNG">LNG</option>
+                      <option value="LPG">LPG</option>
+                      <option value="Bitumen">Bitumen</option>
+                      <option value="Gasoline">Gasoline</option>
+                      <option value="Aviation Fuel">Aviation Fuel</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Quantity</span>
+                    <input
+                      value={formData.quantity}
+                      onChange={(event) => updateField("quantity", event.target.value)}
+                      className={inputClassName}
+                      placeholder="e.g. 50,000"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Unit</span>
+                    <select
+                      value={formData.unit}
+                      onChange={(event) => updateField("unit", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select unit</option>
+                      <option value="MT">MT</option>
+                      <option value="BBL">BBL</option>
+                      <option value="Gallons">Gallons</option>
+                      <option value="Liters">Liters</option>
+                      <option value="Barrels">Barrels</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Delivery Frequency</span>
+                    <select
+                      value={formData.delivery_frequency}
+                      onChange={(event) => updateField("delivery_frequency", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select frequency</option>
+                      <option value="One Time">One Time</option>
+                      <option value="Weekly">Weekly</option>
+                      <option value="Monthly">Monthly</option>
+                      <option value="Quarterly">Quarterly</option>
+                      <option value="Annual Contract">Annual Contract</option>
+                      <option value="Spot">Spot</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Contract Length</span>
+                    <select
+                      value={formData.contract_length}
+                      onChange={(event) => updateField("contract_length", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select length</option>
+                      <option value="Spot">Spot</option>
+                      <option value="3 Months">3 Months</option>
+                      <option value="6 Months">6 Months</option>
+                      <option value="12 Months">12 Months</option>
+                      <option value="24 Months">24 Months</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Target Price</span>
+                    <input
+                      value={formData.target_price}
+                      onChange={(event) => updateField("target_price", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Target price"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Currency</span>
+                    <select
+                      value={formData.currency}
+                      onChange={(event) => updateField("currency", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select currency</option>
+                      <option value="USD">USD</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                      <option value="AED">AED</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="block text-sm text-slate-300">
+                  <span className="mb-2 block">Payment Method</span>
+                  <select
+                    value={formData.payment_method}
+                    onChange={(event) => updateField("payment_method", event.target.value)}
+                    className={inputClassName}
+                  >
+                    <option value="">Select payment method</option>
+                    <option value="SBLC">SBLC</option>
+                    <option value="LC">LC</option>
+                    <option value="DLC">DLC</option>
+                    <option value="MT103">MT103</option>
+                    <option value="Wire">Wire</option>
+                    <option value="Escrow">Escrow</option>
+                    <option value="Open">Open</option>
+                  </select>
+                </label>
+              </div>
+            ) : null}
+
+            {currentStep === 3 ? (
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Incoterms</span>
+                    <select
+                      value={formData.incoterms}
+                      onChange={(event) => updateField("incoterms", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select incoterms</option>
+                      <option value="FOB">FOB</option>
+                      <option value="CIF">CIF</option>
+                      <option value="TTO">TTO</option>
+                      <option value="TTV">TTV</option>
+                      <option value="CIP">CIP</option>
+                      <option value="DAP">DAP</option>
+                      <option value="DDP">DDP</option>
+                      <option value="FCA">FCA</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Loading Port</span>
+                    <input
+                      value={formData.loading_port}
+                      onChange={(event) => updateField("loading_port", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Loading port"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Destination Port</span>
+                    <input
+                      value={formData.destination_port}
+                      onChange={(event) => updateField("destination_port", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Destination port"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Origin Country</span>
+                    <input
+                      value={formData.origin_country}
+                      onChange={(event) => updateField("origin_country", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Origin country"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Destination Country</span>
+                    <input
+                      value={formData.destination_country}
+                      onChange={(event) => updateField("destination_country", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Destination country"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-300">
+                    <span className="mb-2 block">Shipping Method</span>
+                    <select
+                      value={formData.shipping_method}
+                      onChange={(event) => updateField("shipping_method", event.target.value)}
+                      className={inputClassName}
+                    >
+                      <option value="">Select shipping method</option>
+                      <option value="Pipeline">Pipeline</option>
+                      <option value="Tanker">Tanker</option>
+                      <option value="Rail">Rail</option>
+                      <option value="Truck">Truck</option>
+                      <option value="Container">Container</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="block text-sm text-slate-300">
+                  <span className="mb-2 block">Documents Available</span>
+                  <input
+                    value={formData.documents_available}
+                    onChange={(event) => updateField("documents_available", event.target.value)}
+                    className={inputClassName}
+                    placeholder="LOI, ICPO, Company Profile, NDA, Passport"
+                  />
+                </label>
+                <label className="block text-sm text-slate-300">
+                  <span className="mb-2 block">Special Instructions</span>
+                  <textarea
+                    value={formData.special_instructions}
+                    onChange={(event) => updateField("special_instructions", event.target.value)}
+                    className="min-h-24 w-full rounded-xl border border-white/15 bg-[#071A2D] px-4 py-3 text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/35 placeholder:text-slate-500"
+                    placeholder="Add any additional documentation or logistics notes"
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            {currentStep === 4 ? (
+              <div className="space-y-4">
+                <div className="rounded-[1.25rem] border border-white/10 bg-[#071A2D]/90 p-5">
+                  <p className="text-sm uppercase tracking-[0.24em] text-[#C8A24D]">Review & Submit</p>
+                  <div className="mt-4 space-y-3 text-sm text-slate-300">
+                    <div><span className="text-white">Company:</span> {formData.company_name || "Not provided"}</div>
+                    <div><span className="text-white">Contact:</span> {formData.contact_name || "Not provided"}</div>
+                    <div><span className="text-white">Email:</span> {formData.email || "Not provided"}</div>
+                    <div><span className="text-white">Inquiry Type:</span> {formData.inquiry_type || "Not provided"}</div>
+                    <div><span className="text-white">Product:</span> {formData.product || "Not provided"}</div>
+                    <div><span className="text-white">Quantity:</span> {formData.quantity || "Not provided"}</div>
+                    <div><span className="text-white">Target Price:</span> {formData.target_price || "Not provided"}</div>
+                    <div><span className="text-white">Ports:</span> {formData.loading_port || "Not provided"} → {formData.destination_port || "Not provided"}</div>
+                    <div><span className="text-white">Special Instructions:</span> {formData.special_instructions || "None provided"}</div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+              {currentStep > 1 ? (
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="rounded-full border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:border-[#C8A24D]/60 hover:text-[#C8A24D]"
+                >
+                  Back
+                </button>
+              ) : null}
+              {currentStep < 4 ? (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="rounded-full bg-[#C8A24D] px-5 py-3 text-sm font-semibold text-[#071A2D] transition hover:bg-[#d8b56a]"
+                >
+                  Continue
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="rounded-full bg-[#C8A24D] px-5 py-3 text-sm font-semibold text-[#071A2D] transition hover:bg-[#d8b56a] disabled:cursor-not-allowed disabled:opacity-80"
+                >
+                  {isSubmitting ? "Submitting..." : "Submit Inquiry"}
+                </button>
+              )}
+            </div>
           </form>
         </section>
 
