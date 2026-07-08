@@ -128,6 +128,87 @@ const isHighPriority = (item: InquiryRecord) => {
   return status === "reviewing" || status === "qualified" || status === "matched" || text.includes("urgent") || text.includes("priority");
 };
 
+const getRelativeTime = (value?: string | null) => {
+  if (!value) return "Unknown";
+
+  const diff = Date.now() - new Date(value).getTime();
+  const seconds = Math.round(diff / 1000);
+  const minutes = Math.round(diff / 60000);
+  const hours = Math.round(diff / 3600000);
+  const days = Math.round(diff / 86400000);
+
+  if (seconds < 60) return `${seconds}s ago`;
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+};
+
+const getPriorityIndicator = (priority: string) => {
+  const normalized = normalizePriorityValue(priority);
+  return normalized === "high" ? "bg-rose-400 text-rose-100" : normalized === "medium" ? "bg-orange-400 text-orange-100" : "bg-emerald-400 text-emerald-900";
+};
+
+const parseDocumentAction = (inquiry: InquiryRecord) => {
+  const docs = (inquiry.documents_available ?? "").toLowerCase();
+
+  if (!docs) {
+    return "Awaiting documents";
+  }
+
+  if (!docs.includes("passport")) {
+    return "Passport Needed";
+  }
+  if (!docs.includes("loi")) {
+    return "LOI Needed";
+  }
+  if (!docs.includes("icpo")) {
+    return "ICPO Needed";
+  }
+
+  return "Ready for Matching";
+};
+
+const formatCurrencyValue = (value: string | null | undefined) => {
+  if (!value) return "—";
+  const numeric = Number(value.replace(/[^0-9.-]+/g, ""));
+  if (Number.isNaN(numeric)) return "—";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(numeric);
+};
+
+const getMissingDocumentCount = (inquiry: InquiryRecord) => {
+  const docs = (inquiry.documents_available ?? "").toLowerCase();
+  if (!docs) return 3;
+  const missing = ["passport", "loi", "icpo", "company registration"].filter((doc) => !docs.includes(doc));
+  return missing.length;
+};
+
+const getInferenceRecommendations = (inquiries: InquiryRecord[]) => {
+  const recommendations: string[] = [];
+  const openHighValue = inquiries.some((item) => normalizePriorityValue(item.priority) === "high" && normalizeStatusValue(item.status) !== "matched");
+  const unassigned = inquiries.some((item) => !item.broker_notes && normalizeStatusValue(item.status) !== "closed");
+  const missingPassport = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("passport") && normalizeStatusValue(item.status) !== "closed");
+  const missingLOI = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("loi") && normalizeStatusValue(item.status) !== "closed");
+
+  if (openHighValue) recommendations.push("High-value inquiry awaiting broker assignment.");
+  if (missingPassport) recommendations.push("Missing passport detected.");
+  if (missingLOI) recommendations.push("Recommend requesting LOI.");
+  if (unassigned) recommendations.push("Potential duplicate inquiry detected.");
+  if (recommendations.length === 0) {
+    recommendations.push("Buyer appears ready for matching.");
+    recommendations.push("Opportunity looks strong for today’s desk.");
+  }
+
+  return recommendations.slice(0, 4);
+};
+
+const getDocumentStatusLabel = (status: string) => {
+  if (status === "Uploaded") return "Uploaded";
+  if (status === "Missing") return "Missing";
+  if (status === "Pending Review") return "Pending Review";
+  if (status === "Verified") return "Verified";
+  return "Missing";
+};
+
 const getDocumentEntries = (documentsValue?: string | null) => {
   const rawDocuments = (documentsValue ?? "")
     .split(/[\n,;]+/)
@@ -339,6 +420,53 @@ export default function AdminPage() {
     }
   };
 
+  const priorityTasks = useMemo(() => {
+    return inquiries
+      .filter((item) => isHighPriority(item) || normalizeStatusValue(item.status) === "reviewing")
+      .slice(0, 4)
+      .map((item) => ({
+        id: item.id ?? `${item.email}-${item.created_at}`,
+        company: item.company_name ?? item.name ?? "Unnamed inquiry",
+        action: parseDocumentAction(item),
+        priority: normalizePriorityValue(item.priority),
+        due: item.delivery_window ? item.delivery_window : formatDate(item.created_at) || "Today",
+      }));
+  }, [inquiries]);
+
+  const recentActivity = useMemo(() => {
+    const activities = inquiries
+      .slice()
+      .sort((a, b) => (new Date(b.updated_at ?? b.created_at ?? "").getTime() - new Date(a.updated_at ?? a.created_at ?? "").getTime()))
+      .slice(0, 4)
+      .map((item) => ({
+        id: item.id ?? `${item.email}-${item.created_at}`,
+        label: `${formatStatusLabel(item.status)} • ${item.product ?? item.inquiry_type ?? "Inquiry"}`,
+        timestamp: item.updated_at ?? item.created_at ?? "",
+        detail: `${item.company_name ?? item.name ?? "Unknown"} ${item.product ? `for ${item.product}` : ""}`.trim(),
+      }));
+
+    return activities;
+  }, [inquiries]);
+
+  const recommendations = useMemo(() => getInferenceRecommendations(inquiries), [inquiries]);
+
+  const brokerSnapshot = useMemo(() => {
+    const followUpsDueToday = inquiries.filter((item) => normalizeStatusValue(item.status) === "reviewing").length;
+    const activeDeals = inquiries.filter((item) => normalizeStatusValue(item.status) !== "closed").length;
+    const highPriorityDeals = inquiries.filter((item) => normalizePriorityValue(item.priority) === "high").length;
+    const missingDocuments = inquiries.reduce((total, item) => total + getMissingDocumentCount(item), 0);
+    const pipelineValue = formatCurrencyValue(inquiries.reduce((total, item) => total + Number(item.target_price ?? 0), 0).toString());
+
+    return {
+      activeDeals,
+      highPriorityDeals,
+      followUpsDueToday,
+      missingDocuments,
+      pipelineValue,
+      averageResponseTime: `${Math.max(1, Math.round(inquiries.length ? inquiries.reduce((sum, item) => sum + (new Date(item.updated_at ?? item.created_at ?? "").getTime() - new Date(item.created_at ?? item.updated_at ?? "").getTime()), 0) / inquiries.length / 3600000 : 1))}h`,
+    };
+  }, [inquiries]);
+
   const panelVisible = Boolean(selectedInquiry || panelOpen);
   const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
   const timelineEntries = [
@@ -382,6 +510,89 @@ export default function AdminPage() {
               <p className={`mt-3 text-3xl font-semibold ${card.tone}`}>{card.value}</p>
             </div>
           ))}
+        </section>
+
+        <section className="rounded-[28px] border border-white/10 bg-[#050B16]/90 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur sm:p-6">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-white">Today's Operations</h2>
+              <p className="mt-1 text-sm text-slate-400">Broker command center for the desk’s highest priority actions and live operations insight.</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-4">
+            <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Today's Priorities</p>
+              <div className="mt-4 space-y-3">
+                {priorityTasks.length ? (
+                  priorityTasks.map((task) => (
+                    <div key={task.id} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${getPriorityIndicator(task.priority)}`}>
+                          <span className="h-2.5 w-2.5 rounded-full bg-current" />
+                          {task.priority}
+                        </span>
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{task.due}</span>
+                      </div>
+                      <p className="mt-3 text-sm font-semibold text-white">{task.company}</p>
+                      <p className="mt-1 text-sm text-slate-300">{task.action}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-7 text-center text-sm text-slate-400">No priority actions available.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Recent Activity</p>
+              <div className="mt-4 space-y-3">
+                {recentActivity.length ? (
+                  recentActivity.map((activity) => (
+                    <div key={activity.id} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-white">{activity.label}</p>
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{getRelativeTime(activity.timestamp)}</span>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-300">{activity.detail}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-7 text-center text-sm text-slate-400">No recent activity yet.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">AI Recommendations</p>
+              <div className="mt-4 space-y-3">
+                {recommendations.map((recommendation) => (
+                  <div key={recommendation} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-4">
+                    <p className="text-sm font-semibold text-white">{recommendation}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Broker Snapshot</p>
+              <div className="mt-4 grid gap-3">
+                {[
+                  { label: "Active Deals", value: brokerSnapshot.activeDeals },
+                  { label: "High Priority Deals", value: brokerSnapshot.highPriorityDeals },
+                  { label: "Follow-Ups Due Today", value: brokerSnapshot.followUpsDueToday },
+                  { label: "Missing Documents", value: brokerSnapshot.missingDocuments },
+                  { label: "Pipeline Value", value: brokerSnapshot.pipelineValue },
+                  { label: "Average Response Time", value: brokerSnapshot.averageResponseTime },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{item.label}</p>
+                    <p className="mt-2 text-2xl font-semibold text-white">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="rounded-[28px] border border-white/10 bg-[#050B16]/90 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur sm:p-6">
