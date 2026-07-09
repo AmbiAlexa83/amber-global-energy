@@ -168,11 +168,20 @@ const parseDocumentAction = (inquiry: InquiryRecord) => {
   return "Ready for Matching";
 };
 
-const formatCurrencyValue = (value: string | null | undefined) => {
-  if (!value) return "—";
-  const numeric = Number(value.replace(/[^0-9.-]+/g, ""));
+const formatCurrencyValue = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return "—";
+
+  const numeric = typeof value === "number" ? value : Number(String(value).replace(/[^0-9.-]+/g, ""));
   if (Number.isNaN(numeric)) return "—";
+
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(numeric);
+};
+
+const parseCurrencyValue = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return 0;
+
+  const numeric = typeof value === "number" ? value : Number(String(value).replace(/[^0-9.-]+/g, ""));
+  return Number.isNaN(numeric) ? 0 : numeric;
 };
 
 const getMissingDocumentCount = (inquiry: InquiryRecord) => {
@@ -182,20 +191,69 @@ const getMissingDocumentCount = (inquiry: InquiryRecord) => {
   return missing.length;
 };
 
+const getReadinessScore = (inquiry: InquiryRecord) => {
+  let score = 0;
+
+  if (inquiry.contact_name) score += 14;
+  if (inquiry.email) score += 14;
+  if (inquiry.phone || inquiry.whatsapp) score += 8;
+  if (inquiry.company_name) score += 12;
+  if (inquiry.company_registration_number || inquiry.company_website) score += 8;
+
+  const docs = (inquiry.documents_available ?? "").toLowerCase();
+  const documentMatches = ["loi", "icpo", "passport", "company registration"].filter((doc) => docs.includes(doc));
+  score += Math.min(documentMatches.length, 4) * 10;
+
+  if (inquiry.product) score += 10;
+  if (inquiry.quantity && inquiry.unit) score += 8;
+  if (inquiry.payment_method || inquiry.incoterms || inquiry.target_price) score += 8;
+
+  const status = normalizeStatusValue(inquiry.status);
+  if (status === "qualified" || status === "matched") score += 12;
+  else if (status === "reviewing") score += 8;
+  else if (status === "awaiting documents") score += 4;
+
+  if (inquiry.assigned_broker || inquiry.broker_notes) score += 8;
+
+  return Math.min(100, Math.max(0, score));
+};
+
+const getReadinessBand = (score: number) => {
+  if (score >= 90) return { label: "Executive Ready", tone: "text-emerald-200" };
+  if (score >= 70) return { label: "Nearly Ready", tone: "text-sky-200" };
+  if (score >= 50) return { label: "Needs Attention", tone: "text-amber-200" };
+  return { label: "High Risk", tone: "text-rose-200" };
+};
+
 const getInferenceRecommendations = (inquiries: InquiryRecord[]) => {
-  const recommendations: string[] = [];
+  const recommendations: Array<{ id: string; icon: string; title: string; detail: string; priority: string }> = [];
   const openHighValue = inquiries.some((item) => normalizePriorityValue(item.priority) === "high" && normalizeStatusValue(item.status) !== "matched");
-  const unassigned = inquiries.some((item) => !item.broker_notes && normalizeStatusValue(item.status) !== "closed");
+  const unassigned = inquiries.some((item) => !item.assigned_broker && normalizeStatusValue(item.status) !== "closed");
   const missingPassport = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("passport") && normalizeStatusValue(item.status) !== "closed");
   const missingLOI = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("loi") && normalizeStatusValue(item.status) !== "closed");
+  const readyForIntroduction = inquiries.some((item) => getReadinessScore(item) >= 90 && normalizeStatusValue(item.status) !== "closed");
+  const documentsComplete = inquiries.some((item) => (item.documents_available ?? "").toLowerCase().includes("loi") && (item.documents_available ?? "").toLowerCase().includes("icpo") && normalizeStatusValue(item.status) !== "closed");
 
-  if (openHighValue) recommendations.push("High-value inquiry awaiting broker assignment.");
-  if (missingPassport) recommendations.push("Missing passport detected.");
-  if (missingLOI) recommendations.push("Recommend requesting LOI.");
-  if (unassigned) recommendations.push("Potential duplicate inquiry detected.");
+  if (openHighValue) {
+    recommendations.push({ id: "high-value", icon: "⚡", title: "High value opportunity requires follow-up", detail: "A premium inquiry is awaiting broker engagement and should be moved to the top of the desk queue.", priority: "High" });
+  }
+  if (missingPassport) {
+    recommendations.push({ id: "passport", icon: "🗂", title: "Missing passport", detail: "One or more active deals still require passport documentation before outreach can proceed.", priority: "Medium" });
+  }
+  if (missingLOI) {
+    recommendations.push({ id: "loi", icon: "📄", title: "Missing LOI", detail: "Request the LOI to keep the deal moving toward qualification and buyer introduction.", priority: "High" });
+  }
+  if (readyForIntroduction) {
+    recommendations.push({ id: "intro", icon: "↗", title: "Ready for buyer introduction", detail: "A deal has reached the readiness threshold for a broker-led introduction.", priority: "High" });
+  }
+  if (documentsComplete) {
+    recommendations.push({ id: "documents", icon: "✓", title: "Documents complete", detail: "Required documentation is now in place for at least one opportunity.", priority: "Medium" });
+  }
+  if (unassigned) {
+    recommendations.push({ id: "assign", icon: "🤝", title: "Broker assignment needed", detail: "Several inquiries still need a named broker to accelerate workflow movement.", priority: "Medium" });
+  }
   if (recommendations.length === 0) {
-    recommendations.push("Buyer appears ready for matching.");
-    recommendations.push("Opportunity looks strong for today’s desk.");
+    recommendations.push({ id: "ready", icon: "✓", title: "All active deals are progressing", detail: "No immediate broker intervention is required at the moment.", priority: "Low" });
   }
 
   return recommendations.slice(0, 4);
@@ -434,28 +492,100 @@ export default function AdminPage() {
   }, [inquiries]);
 
   const recentActivity = useMemo(() => {
-    const activities = inquiries
-      .slice()
-      .sort((a, b) => (new Date(b.updated_at ?? b.created_at ?? "").getTime() - new Date(a.updated_at ?? a.created_at ?? "").getTime()))
-      .slice(0, 4)
-      .map((item) => ({
-        id: item.id ?? `${item.email}-${item.created_at}`,
-        label: `${formatStatusLabel(item.status)} • ${item.product ?? item.inquiry_type ?? "Inquiry"}`,
-        timestamp: item.updated_at ?? item.created_at ?? "",
-        detail: `${item.company_name ?? item.name ?? "Unknown"} ${item.product ? `for ${item.product}` : ""}`.trim(),
-      }));
+    const events = inquiries.flatMap((item) => {
+      const company = item.company_name ?? item.name ?? "Unknown inquiry";
+      const timeline = [
+        {
+          id: `${item.id ?? item.email}-submitted`,
+          label: "Inquiry submitted",
+          detail: `${company} entered the pipeline`,
+          timestamp: item.created_at ?? "",
+        },
+      ];
 
-    return activities;
+      if (item.updated_at && item.updated_at !== item.created_at) {
+        timeline.push({
+          id: `${item.id ?? item.email}-status`,
+          label: "Status updated",
+          detail: `${company} moved to ${formatStatusLabel(item.status)}`,
+          timestamp: item.updated_at,
+        });
+      }
+
+      if (item.priority) {
+        timeline.push({
+          id: `${item.id ?? item.email}-priority`,
+          label: "Priority changed",
+          detail: `${company} is now flagged ${normalizePriorityValue(item.priority)}`,
+          timestamp: item.updated_at ?? item.created_at ?? "",
+        });
+      }
+
+      if (item.documents_available) {
+        timeline.push({
+          id: `${item.id ?? item.email}-documents`,
+          label: "Documents received",
+          detail: `${company} uploaded supporting documents`,
+          timestamp: item.updated_at ?? item.created_at ?? "",
+        });
+      }
+
+      if (item.assigned_broker) {
+        timeline.push({
+          id: `${item.id ?? item.email}-broker`,
+          label: "Broker assigned",
+          detail: `${item.assigned_broker} is now managing ${company}`,
+          timestamp: item.updated_at ?? item.created_at ?? "",
+        });
+      }
+
+      if (item.broker_notes) {
+        timeline.push({
+          id: `${item.id ?? item.email}-notes`,
+          label: "Notes added",
+          detail: `${company} has fresh broker notes`,
+          timestamp: item.updated_at ?? item.created_at ?? "",
+        });
+      }
+
+      return timeline;
+    });
+
+    return events
+      .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+      .slice(0, 6);
   }, [inquiries]);
 
   const recommendations = useMemo(() => getInferenceRecommendations(inquiries), [inquiries]);
+
+  const attentionQueue = useMemo(() => {
+    return inquiries
+      .map((item) => {
+        const waitingHours = item.updated_at ? Math.max(0, Math.round((Date.now() - new Date(item.updated_at).getTime()) / 3600000)) : 0;
+        const missingDocuments = getMissingDocumentCount(item);
+        const priorityWeight = normalizePriorityValue(item.priority) === "high" ? 3 : normalizePriorityValue(item.priority) === "medium" ? 2 : 1;
+        const statusWeight = normalizeStatusValue(item.status) === "reviewing" ? 3 : normalizeStatusValue(item.status) === "awaiting documents" ? 2 : 1;
+        const urgencyScore = priorityWeight * 18 + missingDocuments * 8 + Math.min(waitingHours / 4, 20) + statusWeight * 7;
+
+        return { ...item, urgencyScore, readinessScore: getReadinessScore(item) };
+      })
+      .sort((a, b) => b.urgencyScore - a.urgencyScore)
+      .slice(0, 5);
+  }, [inquiries]);
 
   const brokerSnapshot = useMemo(() => {
     const followUpsDueToday = inquiries.filter((item) => normalizeStatusValue(item.status) === "reviewing").length;
     const activeDeals = inquiries.filter((item) => normalizeStatusValue(item.status) !== "closed").length;
     const highPriorityDeals = inquiries.filter((item) => normalizePriorityValue(item.priority) === "high").length;
     const missingDocuments = inquiries.reduce((total, item) => total + getMissingDocumentCount(item), 0);
-    const pipelineValue = formatCurrencyValue(inquiries.reduce((total, item) => total + Number(item.target_price ?? 0), 0).toString());
+    const pipelineValue = inquiries.reduce((total, item) => total + parseCurrencyValue(item.target_price), 0);
+    const averageResponseHours = inquiries.length
+      ? Math.max(1, Math.round(inquiries.reduce((sum, item) => {
+          const start = new Date(item.created_at ?? item.updated_at ?? "").getTime();
+          const end = new Date(item.updated_at ?? item.created_at ?? "").getTime();
+          return sum + (Number.isNaN(start) || Number.isNaN(end) ? 0 : Math.max(0, end - start) / 3600000);
+        }, 0) / inquiries.length))
+      : 1;
 
     return {
       activeDeals,
@@ -463,9 +593,22 @@ export default function AdminPage() {
       followUpsDueToday,
       missingDocuments,
       pipelineValue,
-      averageResponseTime: `${Math.max(1, Math.round(inquiries.length ? inquiries.reduce((sum, item) => sum + (new Date(item.updated_at ?? item.created_at ?? "").getTime() - new Date(item.created_at ?? item.updated_at ?? "").getTime()), 0) / inquiries.length / 3600000 : 1))}h`,
+      averageResponseTime: `${averageResponseHours}h`,
     };
   }, [inquiries]);
+
+  const insights = useMemo(() => {
+    const readyForIntroduction = inquiries.filter((item) => getReadinessScore(item) >= 90).length;
+    const pipelineValue = inquiries.reduce((total, item) => total + parseCurrencyValue(item.target_price), 0);
+    const uncontactedHighPriority = inquiries.filter((item) => normalizePriorityValue(item.priority) === "high" && !item.assigned_broker && normalizeStatusValue(item.status) !== "closed").length;
+
+    return [
+      { title: "Deal readiness", detail: `${readyForIntroduction} inquiry${readyForIntroduction === 1 ? "" : "ies"} are ready for buyer introduction.` },
+      { title: "Pipeline outlook", detail: `Estimated pipeline exceeds ${formatCurrencyValue(pipelineValue)}.` },
+      { title: "Follow-up gap", detail: `${uncontactedHighPriority} high priority inquiry${uncontactedHighPriority === 1 ? "" : "ies"} have not been contacted.` },
+      { title: "Response efficiency", detail: `Average broker response time is tracking at ${brokerSnapshot.averageResponseTime}.` },
+    ];
+  }, [brokerSnapshot.averageResponseTime, inquiries]);
 
   const panelVisible = Boolean(selectedInquiry || panelOpen);
   const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
@@ -520,41 +663,92 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {[
+              { label: "Active Deals", value: brokerSnapshot.activeDeals, tone: "text-white" },
+              { label: "Deals Awaiting Documents", value: brokerSnapshot.missingDocuments, tone: "text-[#F0D38A]" },
+              { label: "High Priority Opportunities", value: brokerSnapshot.highPriorityDeals, tone: "text-sky-200" },
+              { label: "Deals Ready for Introduction", value: inquiries.filter((item) => getReadinessScore(item) >= 90).length, tone: "text-emerald-200" },
+              { label: "Estimated Pipeline Value", value: formatCurrencyValue(brokerSnapshot.pipelineValue), tone: "text-white" },
+              { label: "Average Response Time", value: brokerSnapshot.averageResponseTime, tone: "text-[#F0D38A]" },
+            ].map((card) => (
+              <div key={card.label} className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">{card.label}</p>
+                <p className={`mt-3 text-3xl font-semibold ${card.tone}`}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
-              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Today's Priorities</p>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">AI Recommended Actions</p>
               <div className="mt-4 space-y-3">
-                {priorityTasks.length ? (
-                  priorityTasks.map((task) => (
-                    <div key={task.id} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${getPriorityIndicator(task.priority)}`}>
-                          <span className="h-2.5 w-2.5 rounded-full bg-current" />
-                          {task.priority}
-                        </span>
-                        <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{task.due}</span>
+                {recommendations.map((recommendation) => (
+                  <div key={recommendation.id} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <span className="mt-0.5 text-lg">{recommendation.icon}</span>
+                        <div>
+                          <p className="text-sm font-semibold text-white">{recommendation.title}</p>
+                          <p className="mt-1 text-sm text-slate-300">{recommendation.detail}</p>
+                        </div>
                       </div>
-                      <p className="mt-3 text-sm font-semibold text-white">{task.company}</p>
-                      <p className="mt-1 text-sm text-slate-300">{task.action}</p>
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${recommendation.priority === "High" ? "bg-rose-500/15 text-rose-200" : recommendation.priority === "Medium" ? "bg-[#C8A24D]/15 text-[#F0D38A]" : "bg-emerald-500/15 text-emerald-200"}`}>
+                        {recommendation.priority}
+                      </span>
                     </div>
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-7 text-center text-sm text-slate-400">No priority actions available.</div>
-                )}
+                  </div>
+                ))}
               </div>
             </div>
 
+            <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Deals Requiring Attention</p>
+              <div className="mt-4 space-y-3">
+                {attentionQueue.length ? (
+                  attentionQueue.map((item) => {
+                    const readinessScore = getReadinessScore(item);
+                    const readinessBand = getReadinessBand(readinessScore);
+
+                    return (
+                      <div key={item.id ?? `${item.email}-${item.created_at}`} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-white">{item.company_name ?? item.name ?? "Unnamed inquiry"}</p>
+                            <p className="mt-1 text-sm text-slate-300">{parseDocumentAction(item)} • {formatStatusLabel(item.status)}</p>
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${normalizePriorityValue(item.priority) === "high" ? "bg-rose-500/15 text-rose-200" : normalizePriorityValue(item.priority) === "medium" ? "bg-[#C8A24D]/15 text-[#F0D38A]" : "bg-emerald-500/15 text-emerald-200"}`}>
+                            {normalizePriorityValue(item.priority)}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+                          <span>{readinessScore}/100</span>
+                          <span className={readinessBand.tone}>{readinessBand.label}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-7 text-center text-sm text-slate-400">No urgent deals require broker attention.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
               <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Recent Activity</p>
               <div className="mt-4 space-y-3">
                 {recentActivity.length ? (
                   recentActivity.map((activity) => (
                     <div key={activity.id} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-white">{activity.label}</p>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">{activity.label}</p>
+                          <p className="mt-2 text-sm text-slate-300">{activity.detail}</p>
+                        </div>
                         <span className="text-xs uppercase tracking-[0.2em] text-slate-500">{getRelativeTime(activity.timestamp)}</span>
                       </div>
-                      <p className="mt-2 text-sm text-slate-300">{activity.detail}</p>
                     </div>
                   ))
                 ) : (
@@ -564,30 +758,12 @@ export default function AdminPage() {
             </div>
 
             <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
-              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">AI Recommendations</p>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Executive Insights</p>
               <div className="mt-4 space-y-3">
-                {recommendations.map((recommendation) => (
-                  <div key={recommendation} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-4">
-                    <p className="text-sm font-semibold text-white">{recommendation}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.32)]">
-              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Broker Snapshot</p>
-              <div className="mt-4 grid gap-3">
-                {[
-                  { label: "Active Deals", value: brokerSnapshot.activeDeals },
-                  { label: "High Priority Deals", value: brokerSnapshot.highPriorityDeals },
-                  { label: "Follow-Ups Due Today", value: brokerSnapshot.followUpsDueToday },
-                  { label: "Missing Documents", value: brokerSnapshot.missingDocuments },
-                  { label: "Pipeline Value", value: brokerSnapshot.pipelineValue },
-                  { label: "Average Response Time", value: brokerSnapshot.averageResponseTime },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{item.label}</p>
-                    <p className="mt-2 text-2xl font-semibold text-white">{item.value}</p>
+                {insights.map((insight) => (
+                  <div key={insight.title} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.25em] text-[#C8A24D]">{insight.title}</p>
+                    <p className="mt-2 text-sm text-slate-200">{insight.detail}</p>
                   </div>
                 ))}
               </div>
@@ -637,12 +813,15 @@ export default function AdminPage() {
                     <th className="px-3 py-2 font-medium">Quantity</th>
                     <th className="px-3 py-2 font-medium">Country</th>
                     <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium">Readiness</th>
                     <th className="px-3 py-2 font-medium">Created</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredInquiries.map((item) => {
                     const statusClass = statusStyles[normalizeStatusValue(item.status)] ?? statusStyles.new;
+                    const readinessScore = getReadinessScore(item);
+                    const readinessBand = getReadinessBand(readinessScore);
 
                     return (
                       <tr
@@ -669,6 +848,12 @@ export default function AdminPage() {
                           <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.2em] ${statusClass}`}>
                             {formatStatusLabel(item.status)}
                           </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm font-medium text-white">{readinessScore}/100</span>
+                            <span className={`text-[10px] uppercase tracking-[0.2em] ${readinessBand.tone}`}>{readinessBand.label}</span>
+                          </div>
                         </td>
                         <td className="rounded-r-2xl px-3 py-3">{formatDate(item.created_at)}</td>
                       </tr>
