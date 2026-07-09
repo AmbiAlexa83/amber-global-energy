@@ -303,6 +303,12 @@ const getDocumentEntries = (documentsValue?: string | null) => {
   return entries;
 };
 
+const getTrustRiskTone = (risk: string) => {
+  if (risk === "Low Risk") return "border-emerald-400/35 bg-emerald-400/12 text-emerald-200";
+  if (risk === "Medium Risk") return "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]";
+  return "border-rose-400/35 bg-rose-400/12 text-rose-200";
+};
+
 export default function AdminPage() {
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
   const [search, setSearch] = useState("");
@@ -314,6 +320,7 @@ export default function AdminPage() {
   const [saveError, setSaveError] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [trustExpanded, setTrustExpanded] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -612,6 +619,228 @@ export default function AdminPage() {
 
   const panelVisible = Boolean(selectedInquiry || panelOpen);
   const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
+  const trustProfile = useMemo(() => {
+    const docsText = (selectedInquiry?.documents_available ?? "").toLowerCase();
+    const specialText = `${selectedInquiry?.message ?? ""} ${selectedInquiry?.special_instructions ?? ""}`.toLowerCase();
+
+    const companyVerificationItems = [
+      { label: "Company Name", verified: Boolean(selectedInquiry?.company_name) },
+      { label: "Registration No.", verified: Boolean(selectedInquiry?.company_registration_number) },
+      { label: "Corporate Website", verified: Boolean(selectedInquiry?.company_website) },
+      { label: "Registered Address", verified: Boolean(selectedInquiry?.address) },
+    ];
+    const companyVerification = {
+      score: Math.round((companyVerificationItems.filter((i) => i.verified).length / companyVerificationItems.length) * 100),
+      items: companyVerificationItems,
+    };
+
+    const contactVerificationItems = [
+      { label: "Contact Name", verified: Boolean(selectedInquiry?.contact_name) },
+      { label: "Corporate Email", verified: Boolean(selectedInquiry?.email?.includes("@")) },
+      { label: "Phone Number", verified: Boolean(selectedInquiry?.phone) },
+      { label: "WhatsApp Contact", verified: Boolean(selectedInquiry?.whatsapp) },
+    ];
+    const contactVerification = {
+      score: Math.round((contactVerificationItems.filter((i) => i.verified).length / contactVerificationItems.length) * 100),
+      items: contactVerificationItems,
+    };
+
+    const documentCompletenessItems = [
+      { label: "LOI", verified: docsText.includes("loi"), critical: true },
+      { label: "Passport", verified: docsText.includes("passport"), critical: true },
+      { label: "ICPO", verified: docsText.includes("icpo"), critical: true },
+      { label: "BCL", verified: docsText.includes("bcl"), critical: false },
+      { label: "Co. Registration", verified: docsText.includes("company registration"), critical: false },
+      { label: "Proof of Funds", verified: /proof of funds|pof|funding/.test(specialText), critical: false },
+    ];
+    const documentCompleteness = {
+      score: Math.round((documentCompletenessItems.filter((i) => i.verified).length / documentCompletenessItems.length) * 100),
+      criticalScore: Math.round(
+        (documentCompletenessItems.filter((i) => i.critical && i.verified).length /
+          Math.max(1, documentCompletenessItems.filter((i) => i.critical).length)) *
+          100
+      ),
+      items: documentCompletenessItems,
+    };
+
+    const tradeReadinessItems = [
+      { label: "Product Specified", verified: Boolean(selectedInquiry?.product) },
+      { label: "Quantity Defined", verified: Boolean(selectedInquiry?.quantity) },
+      { label: "Incoterms Set", verified: Boolean(selectedInquiry?.incoterms) },
+      { label: "Payment Method", verified: Boolean(selectedInquiry?.payment_method) },
+      { label: "Delivery Window", verified: Boolean(selectedInquiry?.delivery_window) },
+      { label: "Destination", verified: Boolean(selectedInquiry?.destination_country || selectedInquiry?.destination_port) },
+    ];
+    const tradeReadiness = {
+      score: Math.round((tradeReadinessItems.filter((i) => i.verified).length / tradeReadinessItems.length) * 100),
+      items: tradeReadinessItems,
+    };
+
+    const riskIndicators: Array<{ label: string; severity: "High" | "Medium" | "Low"; detail: string }> = [];
+    if (!selectedInquiry?.company_registration_number) {
+      riskIndicators.push({ label: "No company registration", severity: "High", detail: "Company has not provided registration details" });
+    }
+    if (!docsText.includes("loi")) {
+      riskIndicators.push({ label: "LOI missing", severity: "High", detail: "Letter of Intent has not been submitted" });
+    }
+    if (!docsText.includes("passport")) {
+      riskIndicators.push({ label: "Passport pending", severity: "Medium", detail: "Identity document required before proceeding" });
+    }
+    if (!selectedInquiry?.assigned_broker) {
+      riskIndicators.push({ label: "No broker assigned", severity: "Medium", detail: "Inquiry lacks dedicated broker oversight" });
+    }
+    if (!selectedInquiry?.company_website) {
+      riskIndicators.push({ label: "Website unverified", severity: "Low", detail: "Corporate web presence has not been confirmed" });
+    }
+    if (!selectedInquiry?.target_price) {
+      riskIndicators.push({ label: "No target price", severity: "Low", detail: "Commercial value is not yet established" });
+    }
+
+    const significantFields = [
+      selectedInquiry?.company_name, selectedInquiry?.company_registration_number, selectedInquiry?.company_website,
+      selectedInquiry?.address, selectedInquiry?.contact_name, selectedInquiry?.email, selectedInquiry?.phone,
+      selectedInquiry?.product, selectedInquiry?.quantity, selectedInquiry?.incoterms, selectedInquiry?.payment_method,
+      selectedInquiry?.delivery_window, selectedInquiry?.target_price, selectedInquiry?.destination_country,
+      selectedInquiry?.documents_available, selectedInquiry?.assigned_broker,
+      docsText.includes("loi") ? "loi" : null,
+      docsText.includes("passport") ? "passport" : null,
+      docsText.includes("icpo") ? "icpo" : null,
+      selectedInquiry?.broker_notes,
+    ];
+    const aiConfidenceScore = Math.round((significantFields.filter(Boolean).length / significantFields.length) * 100);
+
+    const nextSteps: Array<{ step: string; priority: "Critical" | "High" | "Medium" | "Low" }> = [];
+    if (!selectedInquiry?.company_registration_number) {
+      nextSteps.push({ step: "Collect company registration number", priority: "Critical" });
+    }
+    if (!docsText.includes("loi")) {
+      nextSteps.push({ step: "Request Letter of Intent (LOI)", priority: "Critical" });
+    }
+    if (!docsText.includes("passport")) {
+      nextSteps.push({ step: "Request passport from primary contact", priority: "High" });
+    }
+    if (!docsText.includes("icpo")) {
+      nextSteps.push({ step: "Obtain ICPO document", priority: "High" });
+    }
+    if (!selectedInquiry?.assigned_broker) {
+      nextSteps.push({ step: "Assign a dedicated broker", priority: "Medium" });
+    }
+    if (!selectedInquiry?.target_price) {
+      nextSteps.push({ step: "Establish target price and commercial terms", priority: "Medium" });
+    }
+    if (nextSteps.length === 0) {
+      nextSteps.push({ step: "Proceed to buyer introduction", priority: "Low" });
+    }
+
+    if (!selectedInquiry) {
+      return {
+        score: 0,
+        risk: "High Risk",
+        nextAction: "Verify Corporate Registration",
+        breakdown: [
+          { label: "Company registration", points: 0, reason: "No registration information available" },
+          { label: "Corporate email", points: 0, reason: "Email record is missing" },
+          { label: "Website", points: 0, reason: "Website is not yet verified" },
+          { label: "Passport", points: 0, reason: "Passport is pending" },
+          { label: "LOI", points: 0, reason: "LOI has not been submitted" },
+          { label: "ICPO", points: 0, reason: "ICPO is pending" },
+          { label: "Trade references", points: 0, reason: "References have not been supplied" },
+        ],
+        companyVerification,
+        contactVerification,
+        documentCompleteness,
+        tradeReadiness,
+        riskIndicators,
+        aiConfidenceScore: 0,
+        nextSteps,
+      };
+    }
+
+    let score = 0;
+    const breakdown = [] as Array<{ label: string; points: number; reason: string }>;
+
+    if (selectedInquiry.company_registration_number) {
+      score += 20;
+      breakdown.push({ label: "Company registration", points: 20, reason: "Corporate registration data is present" });
+    } else {
+      breakdown.push({ label: "Company registration", points: 0, reason: "Registration information is missing" });
+    }
+
+    if (selectedInquiry.email?.includes("@")) {
+      score += 15;
+      breakdown.push({ label: "Corporate email", points: 15, reason: "Direct corporate email is on file" });
+    } else {
+      breakdown.push({ label: "Corporate email", points: 0, reason: "Corporate email is not available" });
+    }
+
+    if (selectedInquiry.company_website) {
+      score += 10;
+      breakdown.push({ label: "Website", points: 10, reason: "Corporate website is available" });
+    } else {
+      breakdown.push({ label: "Website", points: 0, reason: "Website is not yet verified" });
+    }
+
+    if (docsText.includes("passport")) {
+      score += 10;
+      breakdown.push({ label: "Passport", points: 10, reason: "Passport document uploaded" });
+    } else {
+      score -= 10;
+      breakdown.push({ label: "Passport", points: -10, reason: "Passport remains outstanding" });
+    }
+
+    if (docsText.includes("loi")) {
+      score += 15;
+      breakdown.push({ label: "LOI", points: 15, reason: "LOI was received" });
+    } else {
+      score -= 10;
+      breakdown.push({ label: "LOI", points: -10, reason: "LOI is still pending" });
+    }
+
+    if (docsText.includes("icpo")) {
+      score += 10;
+      breakdown.push({ label: "ICPO", points: 10, reason: "ICPO is in the file" });
+    } else {
+      score -= 10;
+      breakdown.push({ label: "ICPO", points: -10, reason: "ICPO is still pending" });
+    }
+
+    if (/reference|references/.test(specialText)) {
+      score += 10;
+      breakdown.push({ label: "Trade references", points: 10, reason: "Reference details are documented" });
+    } else {
+      score -= 8;
+      breakdown.push({ label: "Trade references", points: -8, reason: "Trade references are not yet on file" });
+    }
+
+    if (selectedInquiry.product || selectedInquiry.quantity || selectedInquiry.incoterms || selectedInquiry.payment_method) {
+      score += 10;
+      breakdown.push({ label: "Commercial terms", points: 10, reason: "Core commercial terms are captured" });
+    } else {
+      breakdown.push({ label: "Commercial terms", points: 0, reason: "Commercial terms remain incomplete" });
+    }
+
+    if (selectedInquiry.assigned_broker || selectedInquiry.broker_notes) {
+      score += 5;
+      breakdown.push({ label: "Broker coverage", points: 5, reason: "Broker workflow is active" });
+    } else {
+      breakdown.push({ label: "Broker coverage", points: 0, reason: "Broker ownership has not been confirmed" });
+    }
+
+    score = Math.max(0, Math.min(100, score));
+
+    let risk = "High Risk";
+    if (score >= 80) risk = "Low Risk";
+    else if (score >= 60) risk = "Medium Risk";
+
+    let nextAction = "Verify Corporate Registration";
+    if (score >= 85) nextAction = "Proceed to Buyer Introduction";
+    else if (!docsText.includes("passport")) nextAction = "Request Passport";
+    else if (!/proof of funds|pof|funding/.test(specialText)) nextAction = "Await Proof of Funds";
+    else if (!selectedInquiry.assigned_broker) nextAction = "Schedule Broker Call";
+
+    return { score, risk, nextAction, breakdown, companyVerification, contactVerification, documentCompleteness, tradeReadiness, riskIndicators, aiConfidenceScore, nextSteps };
+  }, [selectedInquiry]);
+
   const timelineEntries = [
     { label: "Inquiry Submitted", value: selectedInquiry?.created_at },
     { label: "Assigned", value: selectedInquiry?.updated_at },
@@ -903,6 +1132,145 @@ export default function AdminPage() {
                       <p className="mt-1 text-sm text-slate-200">{formatValue(value as string | null | undefined)}</p>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Trust Profile</p>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr] lg:items-start">
+                  <div className="flex flex-col items-center rounded-[24px] border border-white/10 bg-[#050B16]/70 p-4">
+                    <div className="relative flex h-32 w-32 items-center justify-center">
+                      <svg viewBox="0 0 120 120" className="h-32 w-32 -rotate-90">
+                        <circle cx="60" cy="60" r="48" stroke="rgba(255,255,255,0.12)" strokeWidth="10" fill="none" />
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="48"
+                          stroke="#C8A24D"
+                          strokeWidth="10"
+                          strokeLinecap="round"
+                          fill="none"
+                          strokeDasharray={2 * Math.PI * 48}
+                          strokeDashoffset={2 * Math.PI * 48 * (1 - trustProfile.score / 100)}
+                        />
+                      </svg>
+                      <div className="absolute flex flex-col items-center text-center">
+                        <span className="text-3xl font-semibold text-white">{trustProfile.score}</span>
+                        <span className="text-[10px] uppercase tracking-[0.25em] text-slate-400">/100</span>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm font-medium text-white">Overall Trust Score</p>
+                    <span className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${getTrustRiskTone(trustProfile.risk)}`}>
+                      {trustProfile.risk}
+                    </span>
+                    <div className="mt-4 w-full rounded-[18px] border border-[#C8A24D]/20 bg-[#C8A24D]/6 p-3 text-center">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">AI Confidence</p>
+                      <p className="mt-1 text-2xl font-semibold text-[#F0D38A]">{trustProfile.aiConfidenceScore}%</p>
+                      <p className="mt-0.5 text-[10px] text-slate-600">Data completeness</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { title: "Company", data: trustProfile.companyVerification },
+                        { title: "Contact", data: trustProfile.contactVerification },
+                        { title: "Documents", data: { score: trustProfile.documentCompleteness.score, items: trustProfile.documentCompleteness.items.map((i) => ({ label: i.label, verified: i.verified, critical: i.critical })) } },
+                        { title: "Trade", data: trustProfile.tradeReadiness },
+                      ].map(({ title, data }) => (
+                        <div key={title} className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{title}</p>
+                            <span className={`text-xs font-semibold ${data.score >= 75 ? "text-emerald-300" : data.score >= 40 ? "text-[#F0D38A]" : "text-rose-300"}`}>
+                              {data.score}%
+                            </span>
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            {data.items.map((item) => (
+                              <div key={item.label} className="flex items-center gap-1.5">
+                                <span className={`shrink-0 text-[9px] ${"critical" in item && item.critical && !item.verified ? "text-rose-500" : item.verified ? "text-emerald-400" : "text-slate-700"}`}>
+                                  {item.verified ? "●" : "○"}
+                                </span>
+                                <span className={`text-[10px] leading-tight ${"critical" in item && item.critical && !item.verified ? "text-slate-400" : item.verified ? "text-slate-300" : "text-slate-600"}`}>
+                                  {item.label}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Recommended Next Action</p>
+                      <p className="mt-2 text-sm font-medium text-white">{trustProfile.nextAction}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {trustProfile.riskIndicators.length > 0 && (
+                  <div className="mt-4 rounded-[20px] border border-rose-400/20 bg-rose-400/5 p-4">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Risk Indicators</p>
+                    <div className="mt-3 space-y-2">
+                      {trustProfile.riskIndicators.map((risk) => (
+                        <div key={risk.label} className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-[#071A2D]/80 px-3 py-2">
+                          <div>
+                            <p className="text-sm font-medium text-white">{risk.label}</p>
+                            <p className="mt-0.5 text-xs text-slate-500">{risk.detail}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${risk.severity === "High" ? "border-rose-400/35 bg-rose-400/12 text-rose-200" : risk.severity === "Medium" ? "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]" : "border-slate-400/35 bg-slate-400/12 text-slate-300"}`}>
+                            {risk.severity}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4 rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Next Verification Steps</p>
+                  <div className="mt-3 space-y-2">
+                    {trustProfile.nextSteps.map((item, index) => (
+                      <div key={item.step} className="flex items-start gap-3">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#C8A24D]/40 bg-[#C8A24D]/12 text-[10px] font-medium text-[#F0D38A]">
+                          {index + 1}
+                        </span>
+                        <div className="flex flex-1 items-start justify-between gap-2">
+                          <p className="text-sm text-slate-200">{item.step}</p>
+                          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${item.priority === "Critical" ? "border-rose-400/35 bg-rose-400/12 text-rose-200" : item.priority === "High" ? "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]" : item.priority === "Medium" ? "border-sky-400/35 bg-sky-400/12 text-sky-200" : "border-emerald-400/35 bg-emerald-400/12 text-emerald-200"}`}>
+                            {item.priority}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                  <button
+                    type="button"
+                    onClick={() => setTrustExpanded((value) => !value)}
+                    className="flex w-full items-center justify-between text-left text-sm font-medium text-white"
+                  >
+                    <span>Why this score?</span>
+                    <span className="text-[#C8A24D]">{trustExpanded ? "−" : "+"}</span>
+                  </button>
+                  {trustExpanded ? (
+                    <div className="mt-3 space-y-2">
+                      {trustProfile.breakdown.map((item) => (
+                        <div key={item.label} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#071A2D]/80 px-3 py-2 text-sm text-slate-300">
+                          <div>
+                            <p className="font-medium text-white">{item.label}</p>
+                            <p className="mt-1 text-xs text-slate-500">{item.reason}</p>
+                          </div>
+                          <span className={`text-sm font-medium ${item.points >= 0 ? "text-[#F0D38A]" : "text-rose-200"}`}>
+                            {item.points >= 0 ? `+${item.points}` : item.points}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
