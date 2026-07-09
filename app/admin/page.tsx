@@ -309,6 +309,41 @@ const getTrustRiskTone = (risk: string) => {
   return "border-rose-400/35 bg-rose-400/12 text-rose-200";
 };
 
+const getDealVelocity = (inquiry: InquiryRecord) => {
+  const created = inquiry.created_at ? new Date(inquiry.created_at).getTime() : 0;
+  const updated = inquiry.updated_at ? new Date(inquiry.updated_at).getTime() : created;
+  const ageHours = created ? Math.max(0, (Date.now() - created) / 3600000) : 0;
+  const hoursSinceUpdate = updated ? Math.max(0, (Date.now() - updated) / 3600000) : 0;
+  const status = normalizeStatusValue(inquiry.status);
+
+  if (status === "matched" || status === "closed") return { label: "Deal Closed", tone: "text-slate-300", score: 100 };
+  if (ageHours < 12 && hoursSinceUpdate < 12) return { label: "Active", tone: "text-emerald-200", score: 95 };
+  if (hoursSinceUpdate < 24 && (status === "reviewing" || status === "qualified")) return { label: "Moving Fast", tone: "text-emerald-200", score: 80 };
+  if (hoursSinceUpdate < 48) return { label: "In Progress", tone: "text-sky-200", score: 60 };
+  if (hoursSinceUpdate < 96) return { label: "Slowing", tone: "text-[#F0D38A]", score: 40 };
+  return { label: "Stalled", tone: "text-rose-200", score: 15 };
+};
+
+const getGeographicRisk = (country: string | null | undefined) => {
+  const highRisk = ["iran", "north korea", "syria", "russia", "belarus", "myanmar", "cuba", "venezuela"];
+  const mediumRisk = ["nigeria", "iraq", "libya", "angola", "south sudan", "yemen", "sudan", "somalia"];
+  const normalized = (country ?? "").toLowerCase();
+  if (highRisk.some((c) => normalized.includes(c))) return { label: "Elevated", tone: "border-rose-400/35 bg-rose-400/12 text-rose-200" };
+  if (mediumRisk.some((c) => normalized.includes(c))) return { label: "Monitor", tone: "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]" };
+  return { label: "Standard", tone: "border-emerald-400/35 bg-emerald-400/12 text-emerald-200" };
+};
+
+const getProductRisk = (product: string | null | undefined) => {
+  const crude = ["crude", "sweet crude", "sour crude", "bonny light", "brent", "wti", "urals"];
+  const refined = ["jet", "diesel", "d6", "d2", "gasoil", "lpg", "lng", "naphtha", "mazut", "fuel oil"];
+  const normalized = (product ?? "").toLowerCase();
+  if (crude.some((p) => normalized.includes(p))) return { label: "Crude Oil", sector: "Upstream" };
+  if (refined.some((p) => normalized.includes(p))) return { label: "Refined Product", sector: "Downstream" };
+  if (normalized.includes("gas")) return { label: "Gas", sector: "Midstream" };
+  if (normalized) return { label: normalized.split(" ").slice(0, 3).join(" "), sector: "Commodity" };
+  return { label: "Unspecified", sector: "Unknown" };
+};
+
 export default function AdminPage() {
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
   const [search, setSearch] = useState("");
@@ -618,6 +653,64 @@ export default function AdminPage() {
   }, [brokerSnapshot.averageResponseTime, inquiries]);
 
   const panelVisible = Boolean(selectedInquiry || panelOpen);
+    const commercialIntelligence = useMemo(() => {
+      if (!selectedInquiry) return null;
+
+      const rawPrice = parseCurrencyValue(selectedInquiry.target_price);
+      const rawQty = Number((selectedInquiry.quantity ?? "").replace(/[^0-9.]+/g, "")) || 0;
+      const rawUnit = (selectedInquiry.unit ?? "").toLowerCase();
+      const barrelEquivalent =
+        rawUnit.includes("barrel") || rawUnit.includes("bbl")
+          ? rawQty
+          : rawUnit.includes("mt") || rawUnit.includes("metric ton")
+            ? rawQty * 7.3
+            : rawQty;
+      const dealValue = rawPrice > 0 && rawQty > 0 ? rawPrice * barrelEquivalent : rawPrice > 0 ? rawPrice : 0;
+
+      const commissionText = (selectedInquiry.commission ?? "").toLowerCase();
+      const commissionMatch = commissionText.match(/([0-9.]+)%/);
+      const commissionPct = commissionMatch ? Number(commissionMatch[1]) : 0;
+      const commissionValue = commissionPct > 0 && dealValue > 0 ? (commissionPct / 100) * dealValue : 0;
+
+      const velocity = getDealVelocity(selectedInquiry);
+      const geoRisk = getGeographicRisk(selectedInquiry.destination_country ?? selectedInquiry.country);
+      const product = getProductRisk(selectedInquiry.product);
+
+      const daysSinceUpdate = selectedInquiry.updated_at
+        ? Math.round((Date.now() - new Date(selectedInquiry.updated_at).getTime()) / 86400000)
+        : 0;
+
+      const commercialFlags: Array<{ label: string; detail: string; severity: string }> = [];
+      if (!selectedInquiry.target_price) {
+        commercialFlags.push({ label: "No target price set", detail: "Commercial value is undefined — establish pricing before advancing.", severity: "High" });
+      }
+      if (!selectedInquiry.incoterms) {
+        commercialFlags.push({ label: "Incoterms missing", detail: "Delivery risk allocation is unresolved.", severity: "Medium" });
+      }
+      if (!selectedInquiry.payment_method) {
+        commercialFlags.push({ label: "Payment terms undefined", detail: "Settlement risk needs to be established before matching.", severity: "Medium" });
+      }
+      if (velocity.score < 40) {
+        commercialFlags.push({ label: "Deal velocity low", detail: `Last activity was ${daysSinceUpdate} day${daysSinceUpdate === 1 ? "" : "s"} ago — re-engage to avoid cold pipeline.`, severity: "Medium" });
+      }
+      if ((selectedInquiry.financing_needed ?? "").toLowerCase().includes("yes")) {
+        commercialFlags.push({ label: "Financing required", detail: "Buyer has indicated financing will be needed — factor into timeline.", severity: "Low" });
+      }
+
+      const tradeStructure = [
+        { label: "Inquiry Type", value: selectedInquiry.inquiry_type ?? "—" },
+        { label: "Product", value: `${product.label} — ${product.sector}` },
+        { label: "Quantity", value: selectedInquiry.quantity && selectedInquiry.unit ? `${selectedInquiry.quantity} ${selectedInquiry.unit}` : "—" },
+        { label: "Incoterms", value: selectedInquiry.incoterms ?? "—" },
+        { label: "Payment Terms", value: selectedInquiry.payment_method ?? "—" },
+        { label: "Delivery Window", value: selectedInquiry.delivery_window ?? "—" },
+        { label: "Origin", value: selectedInquiry.origin_country ?? selectedInquiry.loading_port ?? "—" },
+        { label: "Destination", value: selectedInquiry.destination_country ?? selectedInquiry.destination_port ?? "—" },
+      ];
+
+      return { dealValue, commissionValue, commissionPct, velocity, geoRisk, product, daysSinceUpdate, commercialFlags, tradeStructure };
+    }, [selectedInquiry]);
+
   const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
   const trustProfile = useMemo(() => {
     const docsText = (selectedInquiry?.documents_available ?? "").toLowerCase();
@@ -1290,6 +1383,104 @@ export default function AdminPage() {
                   ))}
                 </div>
               </div>
+
+              {commercialIntelligence ? (
+                <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Commercial Intelligence</p>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Est. Deal Value</p>
+                      <p className="mt-2 text-2xl font-semibold text-white">
+                        {commercialIntelligence.dealValue > 0 ? formatCurrencyValue(commercialIntelligence.dealValue) : "—"}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-600">
+                        {selectedInquiry?.quantity && selectedInquiry?.unit
+                          ? `${selectedInquiry.quantity} ${selectedInquiry.unit}`
+                          : "Quantity not specified"}
+                      </p>
+                    </div>
+                    <div className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Commission Est.</p>
+                      <p className="mt-2 text-2xl font-semibold text-[#F0D38A]">
+                        {commercialIntelligence.commissionValue > 0
+                          ? formatCurrencyValue(commercialIntelligence.commissionValue)
+                          : commercialIntelligence.commissionPct > 0
+                            ? `${commercialIntelligence.commissionPct}%`
+                            : "—"}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-600">
+                        {commercialIntelligence.commissionPct > 0
+                          ? `${commercialIntelligence.commissionPct}% of deal value`
+                          : "Commission not specified"}
+                      </p>
+                    </div>
+                    <div className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Deal Velocity</p>
+                      <p className={`mt-2 text-2xl font-semibold ${commercialIntelligence.velocity.tone}`}>
+                        {commercialIntelligence.velocity.label}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-600">
+                        {commercialIntelligence.daysSinceUpdate === 0
+                          ? "Updated today"
+                          : `Last activity ${commercialIntelligence.daysSinceUpdate}d ago`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Product Classification</p>
+                      <p className="mt-2 text-sm font-semibold text-white">{commercialIntelligence.product.label}</p>
+                      <p className="mt-1 text-[10px] text-slate-500">{commercialIntelligence.product.sector} market segment</p>
+                    </div>
+                    <div className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Geographic Risk</p>
+                      <span className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${commercialIntelligence.geoRisk.tone}`}>
+                        {commercialIntelligence.geoRisk.label}
+                      </span>
+                      <p className="mt-2 text-[10px] text-slate-500">
+                        {selectedInquiry?.destination_country ?? selectedInquiry?.country ?? "Destination unspecified"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-[20px] border border-white/10 bg-[#050B16]/70 p-4">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Trade Structure</p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {commercialIntelligence.tradeStructure.map((row) => (
+                        <div key={row.label}>
+                          <p className="text-[10px] uppercase tracking-[0.18em] text-slate-600">{row.label}</p>
+                          <p className="mt-0.5 text-sm text-slate-200">{row.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {commercialIntelligence.commercialFlags.length > 0 ? (
+                    <div className="mt-3 rounded-[20px] border border-[#C8A24D]/20 bg-[#C8A24D]/5 p-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Commercial Risk Flags</p>
+                      <div className="mt-3 space-y-2">
+                        {commercialIntelligence.commercialFlags.map((flag) => (
+                          <div key={flag.label} className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-[#071A2D]/80 px-3 py-2">
+                            <div>
+                              <p className="text-sm font-medium text-white">{flag.label}</p>
+                              <p className="mt-0.5 text-xs text-slate-500">{flag.detail}</p>
+                            </div>
+                            <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${flag.severity === "High" ? "border-rose-400/35 bg-rose-400/12 text-rose-200" : flag.severity === "Medium" ? "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]" : "border-slate-400/35 bg-slate-400/12 text-slate-300"}`}>
+                              {flag.severity}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-[20px] border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-sm text-emerald-200">
+                      No commercial risk flags detected. Deal structure is clean.
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
                 <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Trade Information</p>
