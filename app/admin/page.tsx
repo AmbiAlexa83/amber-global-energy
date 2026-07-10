@@ -449,7 +449,6 @@ export default function AdminPage() {
         setLoading(true);
         setError("");
 
-        console.debug("[Admin] fetching inquiries from /api/admin/inquiries");
         const response = await fetch("/api/admin/inquiries", {
           method: "GET",
           cache: "no-store",
@@ -459,7 +458,6 @@ export default function AdminPage() {
         });
 
         const payload = await response.json();
-        console.debug("[Admin] inquiries response", payload);
 
         if (!response.ok) {
           throw new Error(payload.error ?? "Failed to load inquiries.");
@@ -1041,10 +1039,13 @@ export default function AdminPage() {
                 A secure operating foundation for monitoring trade inquiries, prioritizing opportunities, and tracking follow-up status across the network.
               </p>
             </div>
-            <div className="rounded-2xl border border-[#C8A24D]/20 bg-[#C8A24D]/10 px-4 py-3 text-sm text-slate-300">
-              <div className="font-medium text-white">No authentication enabled</div>
-              <div className="mt-1 text-slate-400">Internal foundation only — access remains open for now.</div>
-            </div>
+            <a
+              href="/admin/logout"
+              aria-label="Log out of the admin dashboard"
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+            >
+              Log out
+            </a>
           </div>
         </header>
 
