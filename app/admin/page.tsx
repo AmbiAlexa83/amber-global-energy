@@ -61,6 +61,15 @@ const statusStyles: Record<string, string> = {
   closed: "border-slate-400/35 bg-slate-400/12 text-slate-200",
 };
 
+type BadgeStatus = "Verified" | "Pending" | "Missing" | "Needs Review";
+
+const badgeStatusStyles: Record<BadgeStatus, string> = {
+  Verified: "border-emerald-400/35 bg-emerald-400/12 text-emerald-200",
+  Pending: "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]",
+  Missing: "border-rose-400/35 bg-rose-400/12 text-rose-200",
+  "Needs Review": "border-sky-400/35 bg-sky-400/12 text-sky-200",
+};
+
 const statusOptions = [
   { value: "new", label: "New" },
   { value: "reviewing", label: "Reviewing" },
@@ -342,6 +351,81 @@ const getProductRisk = (product: string | null | undefined) => {
   if (normalized.includes("gas")) return { label: "Gas", sector: "Midstream" };
   if (normalized) return { label: normalized.split(" ").slice(0, 3).join(" "), sector: "Commodity" };
   return { label: "Unspecified", sector: "Unknown" };
+};
+
+const getVerificationBadges = (inquiry: InquiryRecord): Array<{ label: string; status: BadgeStatus }> => {
+  const docsText = (inquiry.documents_available ?? "").toLowerCase();
+  const specialText = `${inquiry.message ?? ""} ${inquiry.special_instructions ?? ""}`.toLowerCase();
+  const emailValue = inquiry.email ?? "";
+  const emailDomain = emailValue.includes("@") ? (emailValue.split("@")[1] ?? "").toLowerCase() : "";
+  const freeEmailDomains = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "protonmail.com"];
+  const isFreeDomain = freeEmailDomains.includes(emailDomain);
+  const status = normalizeStatusValue(inquiry.status);
+
+  return [
+    {
+      label: "Company Registered",
+      status: inquiry.company_registration_number ? "Verified" : "Missing",
+    },
+    {
+      label: "Website Verified",
+      status: inquiry.company_website ? "Verified" : "Missing",
+    },
+    {
+      label: "Corporate Email",
+      status: emailValue.includes("@") ? (isFreeDomain ? "Needs Review" : "Verified") : "Missing",
+    },
+    {
+      label: "Phone Verified",
+      status: inquiry.phone ? "Verified" : inquiry.whatsapp ? "Pending" : "Missing",
+    },
+    {
+      label: "Passport Uploaded",
+      status: docsText.includes("passport") ? "Verified" : status === "awaiting documents" ? "Pending" : "Missing",
+    },
+    {
+      label: "LOI Uploaded",
+      status: docsText.includes("loi") ? "Verified" : status === "reviewing" ? "Pending" : "Missing",
+    },
+    {
+      label: "ICPO Uploaded",
+      status: docsText.includes("icpo") ? "Verified" : "Missing",
+    },
+    {
+      label: "Proof of Funds",
+      status: /proof of funds|pof/.test(docsText) || /proof of funds|pof/.test(specialText)
+        ? "Verified"
+        : /funding|financ/.test(specialText)
+        ? "Pending"
+        : "Missing",
+    },
+    {
+      label: "Trade References",
+      status: /reference|trade ref/.test(specialText)
+        ? "Verified"
+        : inquiry.company_registration_number
+        ? "Needs Review"
+        : "Missing",
+    },
+    {
+      label: "Business Documents",
+      status: docsText.includes("bcl") || docsText.includes("company registration")
+        ? "Verified"
+        : docsText.length > 3
+        ? "Pending"
+        : "Missing",
+    },
+    {
+      label: "Domain Reputation",
+      status: !emailValue.includes("@")
+        ? "Missing"
+        : isFreeDomain
+        ? "Needs Review"
+        : inquiry.company_website
+        ? "Verified"
+        : "Pending",
+    },
+  ];
 };
 
 export default function AdminPage() {
@@ -712,6 +796,7 @@ export default function AdminPage() {
     }, [selectedInquiry]);
 
   const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
+  const verificationBadges = useMemo(() => (selectedInquiry ? getVerificationBadges(selectedInquiry) : []), [selectedInquiry]);
   const trustProfile = useMemo(() => {
     const docsText = (selectedInquiry?.documents_available ?? "").toLowerCase();
     const specialText = `${selectedInquiry?.message ?? ""} ${selectedInquiry?.special_instructions ?? ""}`.toLowerCase();
@@ -1265,32 +1350,13 @@ export default function AdminPage() {
                   </div>
 
                   <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { title: "Company", data: trustProfile.companyVerification },
-                        { title: "Contact", data: trustProfile.contactVerification },
-                        { title: "Documents", data: { score: trustProfile.documentCompleteness.score, items: trustProfile.documentCompleteness.items.map((i) => ({ label: i.label, verified: i.verified, critical: i.critical })) } },
-                        { title: "Trade", data: trustProfile.tradeReadiness },
-                      ].map(({ title, data }) => (
-                        <div key={title} className="rounded-[20px] border border-white/10 bg-[#050B16]/70 p-3">
-                          <div className="flex items-center justify-between">
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{title}</p>
-                            <span className={`text-xs font-semibold ${data.score >= 75 ? "text-emerald-300" : data.score >= 40 ? "text-[#F0D38A]" : "text-rose-300"}`}>
-                              {data.score}%
-                            </span>
-                          </div>
-                          <div className="mt-2 space-y-1">
-                            {data.items.map((item) => (
-                              <div key={item.label} className="flex items-center gap-1.5">
-                                <span className={`shrink-0 text-[9px] ${"critical" in item && item.critical && !item.verified ? "text-rose-500" : item.verified ? "text-emerald-400" : "text-slate-700"}`}>
-                                  {item.verified ? "●" : "○"}
-                                </span>
-                                <span className={`text-[10px] leading-tight ${"critical" in item && item.critical && !item.verified ? "text-slate-400" : item.verified ? "text-slate-300" : "text-slate-600"}`}>
-                                  {item.label}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {verificationBadges.map((badge) => (
+                        <div key={badge.label} className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-[#050B16]/70 px-3 py-2.5">
+                          <p className="text-[11px] leading-snug text-slate-300">{badge.label}</p>
+                          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-[0.15em] ${badgeStatusStyles[badge.status]}`}>
+                            {badge.status}
+                          </span>
                         </div>
                       ))}
                     </div>
