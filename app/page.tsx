@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { submitInquiry } from "../lib/supabase";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 const marketFocus = [
   "Crude Oil",
@@ -178,6 +177,8 @@ export default function Home() {
   const [formData, setFormData] = useState<InquiryFormData>(initialFormData);
   const [formStatus, setFormStatus] = useState<"idle" | "success" | "error">("idle");
   const [formFeedback, setFormFeedback] = useState("");
+  const formStartTimeRef = useRef<number>(Date.now());
+  const [honeypot, setHoneypot] = useState("");
 
   useEffect(() => {
     const sections = document.querySelectorAll<HTMLElement>("[data-reveal]");
@@ -292,39 +293,52 @@ export default function Home() {
     setIsSubmitting(true);
 
     try {
-      await submitInquiry({
-        name: formData.contact_name.trim() || formData.company_name.trim(),
-        email: formData.email.trim(),
-        message: formData.special_instructions.trim() || `Trade inquiry for ${formData.company_name.trim() || "new mandate"}`,
-        source_page: "home",
-        inquiry_type: formData.inquiry_type.trim(),
-        company_name: formData.company_name.trim(),
-        contact_name: formData.contact_name.trim(),
-        position: formData.position.trim(),
-        phone: formData.phone.trim(),
-        whatsapp: formData.whatsapp.trim(),
-        company_website: formData.company_website.trim(),
-        country: formData.country.trim(),
-        company_registration_number: formData.company_registration_number.trim(),
-        verification_status: formData.verification_status.trim(),
-        role_type: formData.role_type.trim(),
-        product: formData.product.trim(),
-        quantity: formData.quantity.trim(),
-        unit: formData.unit.trim(),
-        delivery_frequency: formData.delivery_frequency.trim(),
-        contract_length: formData.contract_length.trim(),
-        target_price: formData.target_price.trim(),
-        currency: formData.currency.trim(),
-        payment_method: formData.payment_method.trim(),
-        incoterms: formData.incoterms.trim(),
-        loading_port: formData.loading_port.trim(),
-        destination_port: formData.destination_port.trim(),
-        origin_country: formData.origin_country.trim(),
-        destination_country: formData.destination_country.trim(),
-        shipping_method: formData.shipping_method.trim(),
-        documents_available: formData.documents_available.trim(),
-        special_instructions: formData.special_instructions.trim(),
+      const response = await fetch("/api/inquiries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _hp: honeypot,
+          _elapsed: Date.now() - formStartTimeRef.current,
+          name: formData.contact_name.trim() || formData.company_name.trim(),
+          email: formData.email.trim(),
+          message: formData.special_instructions.trim() || `Trade inquiry for ${formData.company_name.trim() || "new mandate"}`,
+          inquiry_type: formData.inquiry_type.trim(),
+          company_name: formData.company_name.trim(),
+          contact_name: formData.contact_name.trim(),
+          position: formData.position.trim(),
+          phone: formData.phone.trim(),
+          whatsapp: formData.whatsapp.trim(),
+          company_website: formData.company_website.trim(),
+          country: formData.country.trim(),
+          company_registration_number: formData.company_registration_number.trim(),
+          verification_status: formData.verification_status.trim(),
+          role_type: formData.role_type.trim(),
+          product: formData.product.trim(),
+          quantity: formData.quantity.trim(),
+          unit: formData.unit.trim(),
+          delivery_frequency: formData.delivery_frequency.trim(),
+          contract_length: formData.contract_length.trim(),
+          target_price: formData.target_price.trim(),
+          currency: formData.currency.trim(),
+          payment_method: formData.payment_method.trim(),
+          incoterms: formData.incoterms.trim(),
+          loading_port: formData.loading_port.trim(),
+          destination_port: formData.destination_port.trim(),
+          origin_country: formData.origin_country.trim(),
+          destination_country: formData.destination_country.trim(),
+          shipping_method: formData.shipping_method.trim(),
+          documents_available: formData.documents_available.trim(),
+          special_instructions: formData.special_instructions.trim(),
+        }),
       });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          (data as { error?: string }).error ?? "We were unable to submit your inquiry. Please try again shortly.",
+        );
+      }
 
       setFormStatus("success");
       setFormFeedback("Thank you. Your trade inquiry has been received and our team will follow up shortly.");
@@ -1112,6 +1126,18 @@ export default function Home() {
                 </div>
               </div>
             ) : null}
+
+            {/* Hidden honeypot — must stay empty. Bots that fill it are rejected server-side. */}
+            <input
+              type="text"
+              name="_hp"
+              value={honeypot}
+              onChange={(e) => setHoneypot(e.target.value)}
+              aria-hidden="true"
+              tabIndex={-1}
+              autoComplete="off"
+              style={{ position: "absolute", left: "-9999px", top: "auto", width: "1px", height: "1px", overflow: "hidden" }}
+            />
 
             <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
               {currentStep > 1 ? (
