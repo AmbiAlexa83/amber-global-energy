@@ -8,6 +8,7 @@ import {
 } from "@/lib/supabase-server";
 import { formatContractStatusLabel, contractStatusStyles } from "@/lib/contract-helpers";
 import ContractForm from "./contract-form";
+import DocumentUploader from "../../_components/document-uploader";
 
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -46,6 +47,8 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
 
         <div className="space-y-4">
           <ContractForm contract={contract} companies={companies} projects={projects} brokers={brokers} />
+
+          <DocumentUploader entityType="contract" entityId={contract.id} />
 
           {contract.company_id ? (
             <Link

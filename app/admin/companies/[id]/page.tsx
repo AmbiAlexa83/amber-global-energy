@@ -5,6 +5,7 @@ import { formatValue, formatDate, formatStatusLabel, normalizePriorityValue } fr
 import { formatProjectStageLabel, projectStageStyles } from "@/lib/project-helpers";
 import { formatContractStatusLabel, contractStatusStyles } from "@/lib/contract-helpers";
 import CompanyForm from "./company-form";
+import DocumentUploader from "../../_components/document-uploader";
 
 export default async function CompanyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -45,6 +46,8 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
 
         <div className="space-y-4">
           <CompanyForm company={company} />
+
+          <DocumentUploader entityType="company" entityId={company.id} />
 
           <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
             <p className="text-sm uppercase tracking-[0.25em] text-slate-400">

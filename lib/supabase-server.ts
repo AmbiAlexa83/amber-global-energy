@@ -756,3 +756,157 @@ export async function updateContractServer(
 
   return data as unknown as ContractRecord;
 }
+
+export type DocumentRecord = {
+  id: string;
+  inquiry_id: string | null;
+  company_id: string | null;
+  project_id: string | null;
+  contract_id: string | null;
+  file_name: string;
+  storage_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  uploaded_by: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentWithUrl = DocumentRecord & { download_url: string | null };
+
+const DOCUMENT_BUCKET = "documents";
+const DOCUMENT_SELECT =
+  "id,inquiry_id,company_id,project_id,contract_id,file_name,storage_path,file_size,mime_type,uploaded_by,notes,created_at,updated_at";
+const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+
+const sanitizeFileName = (name: string) => {
+  const trimmed = name.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+  return trimmed.slice(-150) || "file";
+};
+
+export type DocumentEntityLinks = {
+  inquiry_id?: string | null;
+  company_id?: string | null;
+  project_id?: string | null;
+  contract_id?: string | null;
+};
+
+export async function getDocumentsForEntityServer(links: DocumentEntityLinks): Promise<DocumentWithUrl[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  let query = supabaseServer.from("documents").select(DOCUMENT_SELECT).order("created_at", { ascending: false });
+
+  if (links.inquiry_id) query = query.eq("inquiry_id", links.inquiry_id);
+  else if (links.company_id) query = query.eq("company_id", links.company_id);
+  else if (links.project_id) query = query.eq("project_id", links.project_id);
+  else if (links.contract_id) query = query.eq("contract_id", links.contract_id);
+  else throw new Error("At least one entity link is required to list documents.");
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const documents = (data ?? []) as DocumentRecord[];
+
+  const withUrls = await Promise.all(
+    documents.map(async (document) => {
+      const { data: signed } = await supabaseServer!.storage
+        .from(DOCUMENT_BUCKET)
+        .createSignedUrl(document.storage_path, 3600);
+      return { ...document, download_url: signed?.signedUrl ?? null };
+    }),
+  );
+
+  return withUrls;
+}
+
+export async function uploadDocumentServer(input: {
+  file: File;
+  notes?: string | null;
+  links: DocumentEntityLinks;
+}): Promise<DocumentRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { inquiry_id, company_id, project_id, contract_id } = input.links;
+  if (!inquiry_id && !company_id && !project_id && !contract_id) {
+    throw new Error("At least one entity link is required to upload a document.");
+  }
+
+  if (input.file.size > MAX_DOCUMENT_BYTES) {
+    throw new Error("File is too large. Maximum size is 25MB.");
+  }
+
+  const safeName = sanitizeFileName(input.file.name || "file");
+  const storagePath = `${crypto.randomUUID()}-${safeName}`;
+
+  const arrayBuffer = await input.file.arrayBuffer();
+
+  const { error: uploadError } = await supabaseServer.storage
+    .from(DOCUMENT_BUCKET)
+    .upload(storagePath, arrayBuffer, {
+      contentType: input.file.type || "application/octet-stream",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw new Error(uploadError.message);
+  }
+
+  const { data, error } = await supabaseServer
+    .from("documents")
+    .insert({
+      inquiry_id: inquiry_id || null,
+      company_id: company_id || null,
+      project_id: project_id || null,
+      contract_id: contract_id || null,
+      file_name: input.file.name || safeName,
+      storage_path: storagePath,
+      file_size: input.file.size,
+      mime_type: input.file.type || null,
+      notes: input.notes?.trim() || null,
+    })
+    .select(DOCUMENT_SELECT)
+    .single();
+
+  if (error) {
+    // Clean up the orphaned storage object if the metadata insert failed.
+    await supabaseServer.storage.from(DOCUMENT_BUCKET).remove([storagePath]);
+    throw new Error(error.message);
+  }
+
+  return data as DocumentRecord;
+}
+
+export async function deleteDocumentServer(id: string): Promise<void> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data: document, error: fetchError } = await supabaseServer
+    .from("documents")
+    .select("storage_path")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw new Error(fetchError.message);
+  }
+
+  if (!document) {
+    return;
+  }
+
+  const { error: deleteRowError } = await supabaseServer.from("documents").delete().eq("id", id);
+  if (deleteRowError) {
+    throw new Error(deleteRowError.message);
+  }
+
+  await supabaseServer.storage.from(DOCUMENT_BUCKET).remove([document.storage_path]);
+}

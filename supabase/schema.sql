@@ -246,3 +246,45 @@ create index if not exists contracts_broker_id_idx
 
 -- No public RLS policies — accessible via service role only
 alter table public.contracts enable row level security;
+
+-- ─── Phase 3: Document upload and storage ────────────────────────────────────
+
+insert into storage.buckets (id, name, public)
+values ('documents', 'documents', false)
+on conflict (id) do nothing;
+
+create table if not exists public.documents (
+  id           uuid        primary key default gen_random_uuid(),
+  inquiry_id   uuid        references public.inquiries(id) on delete cascade,
+  company_id   uuid        references public.companies(id) on delete cascade,
+  project_id   uuid        references public.projects(id) on delete cascade,
+  contract_id  uuid        references public.contracts(id) on delete cascade,
+  file_name    text        not null,
+  storage_path text        not null,
+  file_size    bigint,
+  mime_type    text,
+  uploaded_by  text        not null default 'admin',
+  notes        text,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+drop trigger if exists documents_set_updated_at on public.documents;
+create trigger documents_set_updated_at
+  before update on public.documents
+  for each row execute function public.set_updated_at();
+
+create index if not exists documents_inquiry_id_idx
+  on public.documents(inquiry_id);
+
+create index if not exists documents_company_id_idx
+  on public.documents(company_id);
+
+create index if not exists documents_project_id_idx
+  on public.documents(project_id);
+
+create index if not exists documents_contract_id_idx
+  on public.documents(contract_id);
+
+-- No public RLS policies — accessible via service role only
+alter table public.documents enable row level security;
