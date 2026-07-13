@@ -78,3 +78,40 @@ alter table public.inquiries enable row level security;
 drop policy if exists "Allow inserts for inquiries" on public.inquiries;
 create policy "Allow inserts for inquiries" on public.inquiries
 for insert with check (true);
+
+-- ─── Phase 2: CRM lifecycle fields ───────────────────────────────────────────
+
+alter table public.inquiries add column if not exists last_contacted_at timestamptz;
+alter table public.inquiries add column if not exists notes text;
+
+-- Auto-update updated_at on every row change
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists inquiries_set_updated_at on public.inquiries;
+create trigger inquiries_set_updated_at
+  before update on public.inquiries
+  for each row execute function public.set_updated_at();
+
+-- ─── Inquiry history (audit log) ─────────────────────────────────────────────
+
+create table if not exists public.inquiry_history (
+  id           uuid        primary key default gen_random_uuid(),
+  inquiry_id   uuid        not null references public.inquiries(id) on delete cascade,
+  field_changed text       not null,
+  old_value    text,
+  new_value    text,
+  changed_at   timestamptz not null default now(),
+  changed_by   text        not null default 'admin'
+);
+
+create index if not exists inquiry_history_inquiry_id_idx
+  on public.inquiry_history(inquiry_id);
+
+-- No public RLS policies — accessible via service role only
+alter table public.inquiry_history enable row level security;

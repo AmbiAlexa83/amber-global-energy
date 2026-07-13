@@ -2,6 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type HistoryRecord = {
+  id: string;
+  inquiry_id: string;
+  field_changed: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_at: string;
+  changed_by: string;
+};
+
 type InquiryRecord = {
   id?: string | number | null;
   name?: string | null;
@@ -36,6 +46,8 @@ type InquiryRecord = {
   priority?: string | null;
   assigned_broker?: string | null;
   broker_notes?: string | null;
+  notes?: string | null;
+  last_contacted_at?: string | null;
   reviewed_at?: string | null;
   qualified_at?: string | null;
   matched_at?: string | null;
@@ -50,15 +62,20 @@ type InquiryDraft = {
   priority: string;
   assigned_broker: string;
   broker_notes: string;
+  notes: string;
+  last_contacted_at: string;
 };
 
 const statusStyles: Record<string, string> = {
   new: "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]",
-  reviewing: "border-sky-400/35 bg-sky-400/12 text-sky-200",
-  qualified: "border-emerald-400/35 bg-emerald-400/12 text-emerald-200",
-  "awaiting documents": "border-violet-400/35 bg-violet-400/12 text-violet-200",
-  matched: "border-cyan-400/35 bg-cyan-400/12 text-cyan-200",
-  closed: "border-slate-400/35 bg-slate-400/12 text-slate-200",
+  "under review": "border-sky-400/35 bg-sky-400/12 text-sky-200",
+  contacted: "border-violet-400/35 bg-violet-400/12 text-violet-200",
+  negotiating: "border-cyan-400/35 bg-cyan-400/12 text-cyan-200",
+  matched: "border-emerald-400/35 bg-emerald-400/12 text-emerald-200",
+  "documents requested": "border-amber-400/35 bg-amber-400/12 text-amber-200",
+  "compliance review": "border-purple-400/35 bg-purple-400/12 text-purple-200",
+  "closed won": "border-emerald-500/35 bg-emerald-500/12 text-emerald-100",
+  "closed lost": "border-slate-400/35 bg-slate-400/12 text-slate-200",
 };
 
 type BadgeStatus = "Verified" | "Pending" | "Missing" | "Needs Review";
@@ -72,26 +89,30 @@ const badgeStatusStyles: Record<BadgeStatus, string> = {
 
 const statusOptions = [
   { value: "new", label: "New" },
-  { value: "reviewing", label: "Reviewing" },
-  { value: "awaiting documents", label: "Awaiting Documents" },
-  { value: "qualified", label: "Qualified" },
+  { value: "under review", label: "Under Review" },
+  { value: "contacted", label: "Contacted" },
+  { value: "negotiating", label: "Negotiating" },
   { value: "matched", label: "Matched" },
-  { value: "closed", label: "Closed" },
+  { value: "documents requested", label: "Documents Requested" },
+  { value: "compliance review", label: "Compliance Review" },
+  { value: "closed won", label: "Closed Won" },
+  { value: "closed lost", label: "Closed Lost" },
 ];
 
 const priorityOptions = [
   { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
+  { value: "normal", label: "Normal" },
   { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
 ];
+
+const CLOSED_STATUSES = new Set(["closed won", "closed lost"]);
 
 const formatValue = (value: string | null | undefined) => (value?.trim() ? value : "—");
 const formatDate = (value: string | null | undefined) => {
   if (!value) return "—";
-
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-
   return new Intl.DateTimeFormat("en", {
     year: "numeric",
     month: "short",
@@ -103,22 +124,23 @@ const formatDate = (value: string | null | undefined) => {
 
 const normalizeStatusValue = (value?: string | null) => {
   const normalized = (value ?? "new").trim().toLowerCase();
-
-  if (normalized === "waiting_on_documents" || normalized === "waiting on documents" || normalized === "awaiting_documents" || normalized === "awaiting documents") {
-    return "awaiting documents";
-  }
-
+  if (normalized === "reviewing") return "under review";
+  if (normalized === "qualified") return "contacted";
+  if (
+    normalized === "waiting_on_documents" ||
+    normalized === "waiting on documents" ||
+    normalized === "awaiting_documents" ||
+    normalized === "awaiting documents"
+  ) return "documents requested";
+  if (normalized === "closed") return "closed won";
   return normalized || "new";
 };
 
 const normalizePriorityValue = (value?: string | null) => {
-  const normalized = (value ?? "medium").trim().toLowerCase();
-
-  if (normalized === "high" || normalized === "medium" || normalized === "low") {
-    return normalized;
-  }
-
-  return "medium";
+  const normalized = (value ?? "normal").trim().toLowerCase();
+  if (normalized === "high" || normalized === "normal" || normalized === "low" || normalized === "urgent") return normalized;
+  if (normalized === "medium") return "normal";
+  return "normal";
 };
 
 const formatStatusLabel = (value?: string | null) => {
@@ -128,24 +150,19 @@ const formatStatusLabel = (value?: string | null) => {
 
 const isHighPriority = (item: InquiryRecord) => {
   const priority = normalizePriorityValue(item.priority);
-  if (priority === "high") {
-    return true;
-  }
-
+  if (priority === "high" || priority === "urgent") return true;
   const status = normalizeStatusValue(item.status);
   const text = `${item.message ?? ""} ${item.special_instructions ?? ""}`.toLowerCase();
-  return status === "reviewing" || status === "qualified" || status === "matched" || text.includes("urgent") || text.includes("priority");
+  return status === "under review" || status === "contacted" || status === "matched" || text.includes("urgent") || text.includes("priority");
 };
 
 const getRelativeTime = (value?: string | null) => {
   if (!value) return "Unknown";
-
   const diff = Date.now() - new Date(value).getTime();
   const seconds = Math.round(diff / 1000);
   const minutes = Math.round(diff / 60000);
   const hours = Math.round(diff / 3600000);
   const days = Math.round(diff / 86400000);
-
   if (seconds < 60) return `${seconds}s ago`;
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
@@ -154,41 +171,30 @@ const getRelativeTime = (value?: string | null) => {
 
 const getPriorityIndicator = (priority: string) => {
   const normalized = normalizePriorityValue(priority);
-  return normalized === "high" ? "bg-rose-400 text-rose-100" : normalized === "medium" ? "bg-orange-400 text-orange-100" : "bg-emerald-400 text-emerald-900";
+  if (normalized === "urgent") return "bg-red-500 text-red-100";
+  if (normalized === "high") return "bg-rose-400 text-rose-100";
+  if (normalized === "normal") return "bg-orange-400 text-orange-100";
+  return "bg-emerald-400 text-emerald-900";
 };
 
 const parseDocumentAction = (inquiry: InquiryRecord) => {
   const docs = (inquiry.documents_available ?? "").toLowerCase();
-
-  if (!docs) {
-    return "Awaiting documents";
-  }
-
-  if (!docs.includes("passport")) {
-    return "Passport Needed";
-  }
-  if (!docs.includes("loi")) {
-    return "LOI Needed";
-  }
-  if (!docs.includes("icpo")) {
-    return "ICPO Needed";
-  }
-
+  if (!docs) return "Awaiting documents";
+  if (!docs.includes("passport")) return "Passport Needed";
+  if (!docs.includes("loi")) return "LOI Needed";
+  if (!docs.includes("icpo")) return "ICPO Needed";
   return "Ready for Matching";
 };
 
 const formatCurrencyValue = (value: string | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return "—";
-
   const numeric = typeof value === "number" ? value : Number(String(value).replace(/[^0-9.-]+/g, ""));
   if (Number.isNaN(numeric)) return "—";
-
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(numeric);
 };
 
 const parseCurrencyValue = (value: string | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return 0;
-
   const numeric = typeof value === "number" ? value : Number(String(value).replace(/[^0-9.-]+/g, ""));
   return Number.isNaN(numeric) ? 0 : numeric;
 };
@@ -196,34 +202,27 @@ const parseCurrencyValue = (value: string | number | null | undefined) => {
 const getMissingDocumentCount = (inquiry: InquiryRecord) => {
   const docs = (inquiry.documents_available ?? "").toLowerCase();
   if (!docs) return 3;
-  const missing = ["passport", "loi", "icpo", "company registration"].filter((doc) => !docs.includes(doc));
-  return missing.length;
+  return ["passport", "loi", "icpo", "company registration"].filter((doc) => !docs.includes(doc)).length;
 };
 
 const getReadinessScore = (inquiry: InquiryRecord) => {
   let score = 0;
-
   if (inquiry.contact_name) score += 14;
   if (inquiry.email) score += 14;
   if (inquiry.phone || inquiry.whatsapp) score += 8;
   if (inquiry.company_name) score += 12;
   if (inquiry.company_registration_number || inquiry.company_website) score += 8;
-
   const docs = (inquiry.documents_available ?? "").toLowerCase();
   const documentMatches = ["loi", "icpo", "passport", "company registration"].filter((doc) => docs.includes(doc));
   score += Math.min(documentMatches.length, 4) * 10;
-
   if (inquiry.product) score += 10;
   if (inquiry.quantity && inquiry.unit) score += 8;
   if (inquiry.payment_method || inquiry.incoterms || inquiry.target_price) score += 8;
-
   const status = normalizeStatusValue(inquiry.status);
-  if (status === "qualified" || status === "matched") score += 12;
-  else if (status === "reviewing") score += 8;
-  else if (status === "awaiting documents") score += 4;
-
+  if (status === "contacted" || status === "matched") score += 12;
+  else if (status === "under review") score += 8;
+  else if (status === "documents requested") score += 4;
   if (inquiry.assigned_broker || inquiry.broker_notes) score += 8;
-
   return Math.min(100, Math.max(0, score));
 };
 
@@ -236,44 +235,25 @@ const getReadinessBand = (score: number) => {
 
 const getInferenceRecommendations = (inquiries: InquiryRecord[]) => {
   const recommendations: Array<{ id: string; icon: string; title: string; detail: string; priority: string }> = [];
-  const openHighValue = inquiries.some((item) => normalizePriorityValue(item.priority) === "high" && normalizeStatusValue(item.status) !== "matched");
-  const unassigned = inquiries.some((item) => !item.assigned_broker && normalizeStatusValue(item.status) !== "closed");
-  const missingPassport = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("passport") && normalizeStatusValue(item.status) !== "closed");
-  const missingLOI = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("loi") && normalizeStatusValue(item.status) !== "closed");
-  const readyForIntroduction = inquiries.some((item) => getReadinessScore(item) >= 90 && normalizeStatusValue(item.status) !== "closed");
-  const documentsComplete = inquiries.some((item) => (item.documents_available ?? "").toLowerCase().includes("loi") && (item.documents_available ?? "").toLowerCase().includes("icpo") && normalizeStatusValue(item.status) !== "closed");
+  const openHighValue = inquiries.some((item) => {
+    const p = normalizePriorityValue(item.priority);
+    return (p === "high" || p === "urgent") && !CLOSED_STATUSES.has(normalizeStatusValue(item.status));
+  });
+  const unassigned = inquiries.some((item) => !item.assigned_broker && !CLOSED_STATUSES.has(normalizeStatusValue(item.status)));
+  const missingPassport = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("passport") && !CLOSED_STATUSES.has(normalizeStatusValue(item.status)));
+  const missingLOI = inquiries.some((item) => !(item.documents_available ?? "").toLowerCase().includes("loi") && !CLOSED_STATUSES.has(normalizeStatusValue(item.status)));
+  const readyForIntroduction = inquiries.some((item) => getReadinessScore(item) >= 90 && !CLOSED_STATUSES.has(normalizeStatusValue(item.status)));
+  const documentsComplete = inquiries.some((item) => (item.documents_available ?? "").toLowerCase().includes("loi") && (item.documents_available ?? "").toLowerCase().includes("icpo") && !CLOSED_STATUSES.has(normalizeStatusValue(item.status)));
 
-  if (openHighValue) {
-    recommendations.push({ id: "high-value", icon: "⚡", title: "High value opportunity requires follow-up", detail: "A premium inquiry is awaiting broker engagement and should be moved to the top of the desk queue.", priority: "High" });
-  }
-  if (missingPassport) {
-    recommendations.push({ id: "passport", icon: "🗂", title: "Missing passport", detail: "One or more active deals still require passport documentation before outreach can proceed.", priority: "Medium" });
-  }
-  if (missingLOI) {
-    recommendations.push({ id: "loi", icon: "📄", title: "Missing LOI", detail: "Request the LOI to keep the deal moving toward qualification and buyer introduction.", priority: "High" });
-  }
-  if (readyForIntroduction) {
-    recommendations.push({ id: "intro", icon: "↗", title: "Ready for buyer introduction", detail: "A deal has reached the readiness threshold for a broker-led introduction.", priority: "High" });
-  }
-  if (documentsComplete) {
-    recommendations.push({ id: "documents", icon: "✓", title: "Documents complete", detail: "Required documentation is now in place for at least one opportunity.", priority: "Medium" });
-  }
-  if (unassigned) {
-    recommendations.push({ id: "assign", icon: "🤝", title: "Broker assignment needed", detail: "Several inquiries still need a named broker to accelerate workflow movement.", priority: "Medium" });
-  }
-  if (recommendations.length === 0) {
-    recommendations.push({ id: "ready", icon: "✓", title: "All active deals are progressing", detail: "No immediate broker intervention is required at the moment.", priority: "Low" });
-  }
+  if (openHighValue) recommendations.push({ id: "high-value", icon: "⚡", title: "High value opportunity requires follow-up", detail: "A premium inquiry is awaiting broker engagement and should be moved to the top of the desk queue.", priority: "High" });
+  if (missingPassport) recommendations.push({ id: "passport", icon: "🗂", title: "Missing passport", detail: "One or more active deals still require passport documentation before outreach can proceed.", priority: "Medium" });
+  if (missingLOI) recommendations.push({ id: "loi", icon: "📄", title: "Missing LOI", detail: "Request the LOI to keep the deal moving toward qualification and buyer introduction.", priority: "High" });
+  if (readyForIntroduction) recommendations.push({ id: "intro", icon: "↗", title: "Ready for buyer introduction", detail: "A deal has reached the readiness threshold for a broker-led introduction.", priority: "High" });
+  if (documentsComplete) recommendations.push({ id: "documents", icon: "✓", title: "Documents complete", detail: "Required documentation is now in place for at least one opportunity.", priority: "Medium" });
+  if (unassigned) recommendations.push({ id: "assign", icon: "🤝", title: "Broker assignment needed", detail: "Several inquiries still need a named broker to accelerate workflow movement.", priority: "Medium" });
+  if (recommendations.length === 0) recommendations.push({ id: "ready", icon: "✓", title: "All active deals are progressing", detail: "No immediate broker intervention is required at the moment.", priority: "Low" });
 
   return recommendations.slice(0, 4);
-};
-
-const getDocumentStatusLabel = (status: string) => {
-  if (status === "Uploaded") return "Uploaded";
-  if (status === "Missing") return "Missing";
-  if (status === "Pending Review") return "Pending Review";
-  if (status === "Verified") return "Verified";
-  return "Missing";
 };
 
 const getDocumentEntries = (documentsValue?: string | null) => {
@@ -296,17 +276,12 @@ const getDocumentEntries = (documentsValue?: string | null) => {
 
   const entries = knownDocs.map((doc) => {
     const hasMatch = normalized.some((item) => item.includes(doc.key));
-    return {
-      label: doc.label,
-      status: hasMatch ? defaultStatus : "Missing",
-    };
+    return { label: doc.label, status: hasMatch ? defaultStatus : "Missing" };
   });
 
   const extras = rawDocuments.filter((item) => !knownDocs.some((doc) => item.toLowerCase().includes(doc.key)));
   if (extras.length) {
-    extras.forEach((item) => {
-      entries.push({ label: item, status: defaultStatus });
-    });
+    extras.forEach((item) => { entries.push({ label: item, status: defaultStatus }); });
   }
 
   return entries;
@@ -325,9 +300,9 @@ const getDealVelocity = (inquiry: InquiryRecord) => {
   const hoursSinceUpdate = updated ? Math.max(0, (Date.now() - updated) / 3600000) : 0;
   const status = normalizeStatusValue(inquiry.status);
 
-  if (status === "matched" || status === "closed") return { label: "Deal Closed", tone: "text-slate-300", score: 100 };
+  if (CLOSED_STATUSES.has(status) || status === "matched") return { label: "Deal Closed", tone: "text-slate-300", score: 100 };
   if (ageHours < 12 && hoursSinceUpdate < 12) return { label: "Active", tone: "text-emerald-200", score: 95 };
-  if (hoursSinceUpdate < 24 && (status === "reviewing" || status === "qualified")) return { label: "Moving Fast", tone: "text-emerald-200", score: 80 };
+  if (hoursSinceUpdate < 24 && (status === "under review" || status === "contacted")) return { label: "Moving Fast", tone: "text-emerald-200", score: 80 };
   if (hoursSinceUpdate < 48) return { label: "In Progress", tone: "text-sky-200", score: 60 };
   if (hoursSinceUpdate < 96) return { label: "Slowing", tone: "text-[#F0D38A]", score: 40 };
   return { label: "Stalled", tone: "text-rose-200", score: 15 };
@@ -363,74 +338,73 @@ const getVerificationBadges = (inquiry: InquiryRecord): Array<{ label: string; s
   const status = normalizeStatusValue(inquiry.status);
 
   return [
-    {
-      label: "Company Registered",
-      status: inquiry.company_registration_number ? "Verified" : "Missing",
-    },
-    {
-      label: "Website Verified",
-      status: inquiry.company_website ? "Verified" : "Missing",
-    },
-    {
-      label: "Corporate Email",
-      status: emailValue.includes("@") ? (isFreeDomain ? "Needs Review" : "Verified") : "Missing",
-    },
-    {
-      label: "Phone Verified",
-      status: inquiry.phone ? "Verified" : inquiry.whatsapp ? "Pending" : "Missing",
-    },
-    {
-      label: "Passport Uploaded",
-      status: docsText.includes("passport") ? "Verified" : status === "awaiting documents" ? "Pending" : "Missing",
-    },
-    {
-      label: "LOI Uploaded",
-      status: docsText.includes("loi") ? "Verified" : status === "reviewing" ? "Pending" : "Missing",
-    },
-    {
-      label: "ICPO Uploaded",
-      status: docsText.includes("icpo") ? "Verified" : "Missing",
-    },
+    { label: "Company Registered", status: inquiry.company_registration_number ? "Verified" : "Missing" },
+    { label: "Website Verified", status: inquiry.company_website ? "Verified" : "Missing" },
+    { label: "Corporate Email", status: emailValue.includes("@") ? (isFreeDomain ? "Needs Review" : "Verified") : "Missing" },
+    { label: "Phone Verified", status: inquiry.phone ? "Verified" : inquiry.whatsapp ? "Pending" : "Missing" },
+    { label: "Passport Uploaded", status: docsText.includes("passport") ? "Verified" : status === "documents requested" ? "Pending" : "Missing" },
+    { label: "LOI Uploaded", status: docsText.includes("loi") ? "Verified" : status === "under review" ? "Pending" : "Missing" },
+    { label: "ICPO Uploaded", status: docsText.includes("icpo") ? "Verified" : "Missing" },
     {
       label: "Proof of Funds",
       status: /proof of funds|pof/.test(docsText) || /proof of funds|pof/.test(specialText)
         ? "Verified"
-        : /funding|financ/.test(specialText)
-        ? "Pending"
-        : "Missing",
+        : /funding|financ/.test(specialText) ? "Pending" : "Missing",
     },
     {
       label: "Trade References",
       status: /reference|trade ref/.test(specialText)
         ? "Verified"
-        : inquiry.company_registration_number
-        ? "Needs Review"
-        : "Missing",
+        : inquiry.company_registration_number ? "Needs Review" : "Missing",
     },
     {
       label: "Business Documents",
       status: docsText.includes("bcl") || docsText.includes("company registration")
         ? "Verified"
-        : docsText.length > 3
-        ? "Pending"
-        : "Missing",
+        : docsText.length > 3 ? "Pending" : "Missing",
     },
     {
       label: "Domain Reputation",
       status: !emailValue.includes("@")
         ? "Missing"
-        : isFreeDomain
-        ? "Needs Review"
-        : inquiry.company_website
-        ? "Verified"
-        : "Pending",
+        : isFreeDomain ? "Needs Review"
+        : inquiry.company_website ? "Verified" : "Pending",
     },
   ];
+};
+
+const formatHistoryField = (field: string) => {
+  const labels: Record<string, string> = {
+    status: "Status",
+    priority: "Priority",
+    assigned_broker: "Assigned Broker",
+    notes: "Internal Notes",
+    last_contacted_at: "Last Contacted",
+  };
+  return labels[field] ?? field;
+};
+
+const toDateTimeLocal = (value: string | null | undefined): string => {
+  if (!value) return "";
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch {
+    return "";
+  }
 };
 
 export default function AdminPage() {
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState("");
+  const [productFilter, setProductFilter] = useState("");
+  const [inquiryTypeFilter, setInquiryTypeFilter] = useState("");
+  const [countryFilter, setCountryFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState("newest");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedInquiry, setSelectedInquiry] = useState<InquiryRecord | null>(null);
@@ -440,6 +414,8 @@ export default function AdminPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [trustExpanded, setTrustExpanded] = useState(false);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -452,9 +428,7 @@ export default function AdminPage() {
         const response = await fetch("/api/admin/inquiries", {
           method: "GET",
           cache: "no-store",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
         });
 
         const payload = await response.json();
@@ -480,9 +454,7 @@ export default function AdminPage() {
     };
 
     loadInquiries();
-    return () => {
-      isActive = false;
-    };
+    return () => { isActive = false; };
   }, []);
 
   useEffect(() => {
@@ -496,59 +468,91 @@ export default function AdminPage() {
       priority: normalizePriorityValue(selectedInquiry.priority),
       assigned_broker: selectedInquiry.assigned_broker ?? "",
       broker_notes: selectedInquiry.broker_notes ?? "",
+      notes: selectedInquiry.notes ?? "",
+      last_contacted_at: toDateTimeLocal(selectedInquiry.last_contacted_at),
     });
   }, [selectedInquiry]);
 
+  const filterOptions = useMemo(() => {
+    const products = [...new Set(inquiries.map((item) => item.product).filter(Boolean) as string[])].sort();
+    const inquiryTypes = [...new Set(inquiries.map((item) => item.inquiry_type).filter(Boolean) as string[])].sort();
+    const countries = [...new Set(inquiries.map((item) => item.country).filter(Boolean) as string[])].sort();
+    return { products, inquiryTypes, countries };
+  }, [inquiries]);
+
   const filteredInquiries = useMemo(() => {
+    let result = inquiries;
+
     const normalizedSearch = search.trim().toLowerCase();
-    if (!normalizedSearch) return inquiries;
+    if (normalizedSearch) {
+      result = result.filter((item) => {
+        const values = [item.name, item.company_name, item.contact_name, item.email, item.inquiry_type, item.product, item.country, item.status, item.priority]
+          .filter(Boolean).join(" ").toLowerCase();
+        return values.includes(normalizedSearch);
+      });
+    }
 
-    return inquiries.filter((item) => {
-      const values = [
-        item.name,
-        item.company_name,
-        item.contact_name,
-        item.email,
-        item.inquiry_type,
-        item.product,
-        item.quantity,
-        item.country,
-        item.status,
-        item.priority,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+    if (statusFilter) result = result.filter((item) => normalizeStatusValue(item.status) === statusFilter);
+    if (priorityFilter) result = result.filter((item) => normalizePriorityValue(item.priority) === priorityFilter);
+    if (productFilter) result = result.filter((item) => (item.product ?? "").toLowerCase() === productFilter);
+    if (inquiryTypeFilter) result = result.filter((item) => (item.inquiry_type ?? "").toLowerCase() === inquiryTypeFilter);
+    if (countryFilter) result = result.filter((item) => (item.country ?? "").toLowerCase() === countryFilter);
 
-      return values.includes(normalizedSearch);
+    return [...result].sort((a, b) => {
+      if (sortOrder === "oldest") return new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
+      if (sortOrder === "priority") {
+        const rank = { urgent: 4, high: 3, normal: 2, low: 1 };
+        const aPri = rank[normalizePriorityValue(a.priority) as keyof typeof rank] ?? 2;
+        const bPri = rank[normalizePriorityValue(b.priority) as keyof typeof rank] ?? 2;
+        return bPri - aPri;
+      }
+      if (sortOrder === "status") {
+        const rank: Record<string, number> = { new: 9, "under review": 8, contacted: 7, negotiating: 6, matched: 5, "documents requested": 4, "compliance review": 3, "closed won": 2, "closed lost": 1 };
+        return (rank[normalizeStatusValue(b.status)] ?? 9) - (rank[normalizeStatusValue(a.status)] ?? 9);
+      }
+      return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
     });
-  }, [inquiries, search]);
+  }, [inquiries, search, statusFilter, priorityFilter, productFilter, inquiryTypeFilter, countryFilter, sortOrder]);
 
   const totals = useMemo(() => {
     const total = inquiries.length;
     const newCount = inquiries.filter((item) => normalizeStatusValue(item.status) === "new").length;
     const highPriorityCount = inquiries.filter(isHighPriority).length;
-    const closedCount = inquiries.filter((item) => normalizeStatusValue(item.status) === "closed").length;
-
+    const closedCount = inquiries.filter((item) => CLOSED_STATUSES.has(normalizeStatusValue(item.status))).length;
     return { total, newCount, highPriorityCount, closedCount };
   }, [inquiries]);
+
+  const loadHistory = async (id: string | number) => {
+    setHistoryLoading(true);
+    setHistory([]);
+    try {
+      const response = await fetch(`/api/admin/inquiries/history?id=${encodeURIComponent(String(id))}`, { cache: "no-store" });
+      const payload = await response.json();
+      if (response.ok) setHistory(payload.data ?? []);
+    } catch {
+      // history is non-critical
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const openInquiry = (inquiry: InquiryRecord) => {
     setSelectedInquiry(inquiry);
     setPanelOpen(true);
     setIsClosing(false);
     setSaveError("");
+    if (inquiry.id) loadHistory(inquiry.id);
   };
 
   const closeInquiry = () => {
     setIsClosing(true);
-
     window.setTimeout(() => {
       setSelectedInquiry(null);
       setDraft(null);
       setSaveError("");
       setPanelOpen(false);
       setIsClosing(false);
+      setHistory([]);
     }, 220);
   };
 
@@ -557,9 +561,7 @@ export default function AdminPage() {
   };
 
   const saveInquiry = async () => {
-    if (!selectedInquiry?.id || !draft) {
-      return;
-    }
+    if (!selectedInquiry?.id || !draft) return;
 
     try {
       setSaving(true);
@@ -567,22 +569,20 @@ export default function AdminPage() {
 
       const response = await fetch("/api/admin/inquiries", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: selectedInquiry.id,
           status: draft.status,
           priority: draft.priority,
           assigned_broker: draft.assigned_broker,
           broker_notes: draft.broker_notes,
+          notes: draft.notes,
+          last_contacted_at: draft.last_contacted_at || null,
         }),
       });
 
       const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Unable to save inquiry updates.");
-      }
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save inquiry updates.");
 
       const updatedInquiry = payload.data ?? {
         ...selectedInquiry,
@@ -590,21 +590,35 @@ export default function AdminPage() {
         priority: draft.priority,
         assigned_broker: draft.assigned_broker,
         broker_notes: draft.broker_notes,
+        notes: draft.notes,
+        last_contacted_at: draft.last_contacted_at || null,
       };
 
       setInquiries((current) => current.map((item) => (item.id === selectedInquiry.id ? { ...item, ...updatedInquiry } : item)));
       setSelectedInquiry(updatedInquiry);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to save inquiry updates.";
+      await loadHistory(selectedInquiry.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to save inquiry updates.";
       setSaveError(message);
     } finally {
       setSaving(false);
     }
   };
 
+  const resetFilters = () => {
+    setStatusFilter("");
+    setPriorityFilter("");
+    setProductFilter("");
+    setInquiryTypeFilter("");
+    setCountryFilter("");
+    setSortOrder("newest");
+  };
+
+  const hasActiveFilters = Boolean(statusFilter || priorityFilter || productFilter || inquiryTypeFilter || countryFilter || sortOrder !== "newest");
+
   const priorityTasks = useMemo(() => {
     return inquiries
-      .filter((item) => isHighPriority(item) || normalizeStatusValue(item.status) === "reviewing")
+      .filter((item) => isHighPriority(item) || normalizeStatusValue(item.status) === "under review")
       .slice(0, 4)
       .map((item) => ({
         id: item.id ?? `${item.email}-${item.created_at}`,
@@ -687,10 +701,11 @@ export default function AdminPage() {
       .map((item) => {
         const waitingHours = item.updated_at ? Math.max(0, Math.round((Date.now() - new Date(item.updated_at).getTime()) / 3600000)) : 0;
         const missingDocuments = getMissingDocumentCount(item);
-        const priorityWeight = normalizePriorityValue(item.priority) === "high" ? 3 : normalizePriorityValue(item.priority) === "medium" ? 2 : 1;
-        const statusWeight = normalizeStatusValue(item.status) === "reviewing" ? 3 : normalizeStatusValue(item.status) === "awaiting documents" ? 2 : 1;
+        const p = normalizePriorityValue(item.priority);
+        const s = normalizeStatusValue(item.status);
+        const priorityWeight = p === "urgent" ? 4 : p === "high" ? 3 : p === "normal" ? 2 : 1;
+        const statusWeight = s === "under review" ? 3 : s === "documents requested" ? 2 : 1;
         const urgencyScore = priorityWeight * 18 + missingDocuments * 8 + Math.min(waitingHours / 4, 20) + statusWeight * 7;
-
         return { ...item, urgencyScore, readinessScore: getReadinessScore(item) };
       })
       .sort((a, b) => b.urgencyScore - a.urgencyScore)
@@ -698,9 +713,12 @@ export default function AdminPage() {
   }, [inquiries]);
 
   const brokerSnapshot = useMemo(() => {
-    const followUpsDueToday = inquiries.filter((item) => normalizeStatusValue(item.status) === "reviewing").length;
-    const activeDeals = inquiries.filter((item) => normalizeStatusValue(item.status) !== "closed").length;
-    const highPriorityDeals = inquiries.filter((item) => normalizePriorityValue(item.priority) === "high").length;
+    const followUpsDueToday = inquiries.filter((item) => normalizeStatusValue(item.status) === "under review").length;
+    const activeDeals = inquiries.filter((item) => !CLOSED_STATUSES.has(normalizeStatusValue(item.status))).length;
+    const highPriorityDeals = inquiries.filter((item) => {
+      const p = normalizePriorityValue(item.priority);
+      return p === "high" || p === "urgent";
+    }).length;
     const missingDocuments = inquiries.reduce((total, item) => total + getMissingDocumentCount(item), 0);
     const pipelineValue = inquiries.reduce((total, item) => total + parseCurrencyValue(item.target_price), 0);
     const averageResponseHours = inquiries.length
@@ -724,7 +742,10 @@ export default function AdminPage() {
   const insights = useMemo(() => {
     const readyForIntroduction = inquiries.filter((item) => getReadinessScore(item) >= 90).length;
     const pipelineValue = inquiries.reduce((total, item) => total + parseCurrencyValue(item.target_price), 0);
-    const uncontactedHighPriority = inquiries.filter((item) => normalizePriorityValue(item.priority) === "high" && !item.assigned_broker && normalizeStatusValue(item.status) !== "closed").length;
+    const uncontactedHighPriority = inquiries.filter((item) => {
+      const p = normalizePriorityValue(item.priority);
+      return (p === "high" || p === "urgent") && !item.assigned_broker && !CLOSED_STATUSES.has(normalizeStatusValue(item.status));
+    }).length;
 
     return [
       { title: "Deal readiness", detail: `${readyForIntroduction} inquiry${readyForIntroduction === 1 ? "" : "ies"} are ready for buyer introduction.` },
@@ -735,66 +756,58 @@ export default function AdminPage() {
   }, [brokerSnapshot.averageResponseTime, inquiries]);
 
   const panelVisible = Boolean(selectedInquiry || panelOpen);
-    const commercialIntelligence = useMemo(() => {
-      if (!selectedInquiry) return null;
 
-      const rawPrice = parseCurrencyValue(selectedInquiry.target_price);
-      const rawQty = Number((selectedInquiry.quantity ?? "").replace(/[^0-9.]+/g, "")) || 0;
-      const rawUnit = (selectedInquiry.unit ?? "").toLowerCase();
-      const barrelEquivalent =
-        rawUnit.includes("barrel") || rawUnit.includes("bbl")
-          ? rawQty
-          : rawUnit.includes("mt") || rawUnit.includes("metric ton")
-            ? rawQty * 7.3
-            : rawQty;
-      const dealValue = rawPrice > 0 && rawQty > 0 ? rawPrice * barrelEquivalent : rawPrice > 0 ? rawPrice : 0;
+  const commercialIntelligence = useMemo(() => {
+    if (!selectedInquiry) return null;
 
-      const commissionText = (selectedInquiry.commission ?? "").toLowerCase();
-      const commissionMatch = commissionText.match(/([0-9.]+)%/);
-      const commissionPct = commissionMatch ? Number(commissionMatch[1]) : 0;
-      const commissionValue = commissionPct > 0 && dealValue > 0 ? (commissionPct / 100) * dealValue : 0;
+    const rawPrice = parseCurrencyValue(selectedInquiry.target_price);
+    const rawQty = Number((selectedInquiry.quantity ?? "").replace(/[^0-9.]+/g, "")) || 0;
+    const rawUnit = (selectedInquiry.unit ?? "").toLowerCase();
+    const barrelEquivalent =
+      rawUnit.includes("barrel") || rawUnit.includes("bbl")
+        ? rawQty
+        : rawUnit.includes("mt") || rawUnit.includes("metric ton")
+          ? rawQty * 7.3
+          : rawQty;
+    const dealValue = rawPrice > 0 && rawQty > 0 ? rawPrice * barrelEquivalent : rawPrice > 0 ? rawPrice : 0;
 
-      const velocity = getDealVelocity(selectedInquiry);
-      const geoRisk = getGeographicRisk(selectedInquiry.destination_country ?? selectedInquiry.country);
-      const product = getProductRisk(selectedInquiry.product);
+    const commissionText = (selectedInquiry.commission ?? "").toLowerCase();
+    const commissionMatch = commissionText.match(/([0-9.]+)%/);
+    const commissionPct = commissionMatch ? Number(commissionMatch[1]) : 0;
+    const commissionValue = commissionPct > 0 && dealValue > 0 ? (commissionPct / 100) * dealValue : 0;
 
-      const daysSinceUpdate = selectedInquiry.updated_at
-        ? Math.round((Date.now() - new Date(selectedInquiry.updated_at).getTime()) / 86400000)
-        : 0;
+    const velocity = getDealVelocity(selectedInquiry);
+    const geoRisk = getGeographicRisk(selectedInquiry.destination_country ?? selectedInquiry.country);
+    const product = getProductRisk(selectedInquiry.product);
 
-      const commercialFlags: Array<{ label: string; detail: string; severity: string }> = [];
-      if (!selectedInquiry.target_price) {
-        commercialFlags.push({ label: "No target price set", detail: "Commercial value is undefined — establish pricing before advancing.", severity: "High" });
-      }
-      if (!selectedInquiry.incoterms) {
-        commercialFlags.push({ label: "Incoterms missing", detail: "Delivery risk allocation is unresolved.", severity: "Medium" });
-      }
-      if (!selectedInquiry.payment_method) {
-        commercialFlags.push({ label: "Payment terms undefined", detail: "Settlement risk needs to be established before matching.", severity: "Medium" });
-      }
-      if (velocity.score < 40) {
-        commercialFlags.push({ label: "Deal velocity low", detail: `Last activity was ${daysSinceUpdate} day${daysSinceUpdate === 1 ? "" : "s"} ago — re-engage to avoid cold pipeline.`, severity: "Medium" });
-      }
-      if ((selectedInquiry.financing_needed ?? "").toLowerCase().includes("yes")) {
-        commercialFlags.push({ label: "Financing required", detail: "Buyer has indicated financing will be needed — factor into timeline.", severity: "Low" });
-      }
+    const daysSinceUpdate = selectedInquiry.updated_at
+      ? Math.round((Date.now() - new Date(selectedInquiry.updated_at).getTime()) / 86400000)
+      : 0;
 
-      const tradeStructure = [
-        { label: "Inquiry Type", value: selectedInquiry.inquiry_type ?? "—" },
-        { label: "Product", value: `${product.label} — ${product.sector}` },
-        { label: "Quantity", value: selectedInquiry.quantity && selectedInquiry.unit ? `${selectedInquiry.quantity} ${selectedInquiry.unit}` : "—" },
-        { label: "Incoterms", value: selectedInquiry.incoterms ?? "—" },
-        { label: "Payment Terms", value: selectedInquiry.payment_method ?? "—" },
-        { label: "Delivery Window", value: selectedInquiry.delivery_window ?? "—" },
-        { label: "Origin", value: selectedInquiry.origin_country ?? selectedInquiry.loading_port ?? "—" },
-        { label: "Destination", value: selectedInquiry.destination_country ?? selectedInquiry.destination_port ?? "—" },
-      ];
+    const commercialFlags: Array<{ label: string; detail: string; severity: string }> = [];
+    if (!selectedInquiry.target_price) commercialFlags.push({ label: "No target price set", detail: "Commercial value is undefined — establish pricing before advancing.", severity: "High" });
+    if (!selectedInquiry.incoterms) commercialFlags.push({ label: "Incoterms missing", detail: "Delivery risk allocation is unresolved.", severity: "Medium" });
+    if (!selectedInquiry.payment_method) commercialFlags.push({ label: "Payment terms undefined", detail: "Settlement risk needs to be established before matching.", severity: "Medium" });
+    if (velocity.score < 40) commercialFlags.push({ label: "Deal velocity low", detail: `Last activity was ${daysSinceUpdate} day${daysSinceUpdate === 1 ? "" : "s"} ago — re-engage to avoid cold pipeline.`, severity: "Medium" });
+    if ((selectedInquiry.financing_needed ?? "").toLowerCase().includes("yes")) commercialFlags.push({ label: "Financing required", detail: "Buyer has indicated financing will be needed — factor into timeline.", severity: "Low" });
 
-      return { dealValue, commissionValue, commissionPct, velocity, geoRisk, product, daysSinceUpdate, commercialFlags, tradeStructure };
-    }, [selectedInquiry]);
+    const tradeStructure = [
+      { label: "Inquiry Type", value: selectedInquiry.inquiry_type ?? "—" },
+      { label: "Product", value: `${product.label} — ${product.sector}` },
+      { label: "Quantity", value: selectedInquiry.quantity && selectedInquiry.unit ? `${selectedInquiry.quantity} ${selectedInquiry.unit}` : "—" },
+      { label: "Incoterms", value: selectedInquiry.incoterms ?? "—" },
+      { label: "Payment Terms", value: selectedInquiry.payment_method ?? "—" },
+      { label: "Delivery Window", value: selectedInquiry.delivery_window ?? "—" },
+      { label: "Origin", value: selectedInquiry.origin_country ?? selectedInquiry.loading_port ?? "—" },
+      { label: "Destination", value: selectedInquiry.destination_country ?? selectedInquiry.destination_port ?? "—" },
+    ];
+
+    return { dealValue, commissionValue, commissionPct, velocity, geoRisk, product, daysSinceUpdate, commercialFlags, tradeStructure };
+  }, [selectedInquiry]);
 
   const documentEntries = useMemo(() => getDocumentEntries(selectedInquiry?.documents_available), [selectedInquiry]);
   const verificationBadges = useMemo(() => (selectedInquiry ? getVerificationBadges(selectedInquiry) : []), [selectedInquiry]);
+
   const trustProfile = useMemo(() => {
     const docsText = (selectedInquiry?.documents_available ?? "").toLowerCase();
     const specialText = `${selectedInquiry?.message ?? ""} ${selectedInquiry?.special_instructions ?? ""}`.toLowerCase();
@@ -833,8 +846,7 @@ export default function AdminPage() {
       score: Math.round((documentCompletenessItems.filter((i) => i.verified).length / documentCompletenessItems.length) * 100),
       criticalScore: Math.round(
         (documentCompletenessItems.filter((i) => i.critical && i.verified).length /
-          Math.max(1, documentCompletenessItems.filter((i) => i.critical).length)) *
-          100
+          Math.max(1, documentCompletenessItems.filter((i) => i.critical).length)) * 100
       ),
       items: documentCompletenessItems,
     };
@@ -853,24 +865,12 @@ export default function AdminPage() {
     };
 
     const riskIndicators: Array<{ label: string; severity: "High" | "Medium" | "Low"; detail: string }> = [];
-    if (!selectedInquiry?.company_registration_number) {
-      riskIndicators.push({ label: "No company registration", severity: "High", detail: "Company has not provided registration details" });
-    }
-    if (!docsText.includes("loi")) {
-      riskIndicators.push({ label: "LOI missing", severity: "High", detail: "Letter of Intent has not been submitted" });
-    }
-    if (!docsText.includes("passport")) {
-      riskIndicators.push({ label: "Passport pending", severity: "Medium", detail: "Identity document required before proceeding" });
-    }
-    if (!selectedInquiry?.assigned_broker) {
-      riskIndicators.push({ label: "No broker assigned", severity: "Medium", detail: "Inquiry lacks dedicated broker oversight" });
-    }
-    if (!selectedInquiry?.company_website) {
-      riskIndicators.push({ label: "Website unverified", severity: "Low", detail: "Corporate web presence has not been confirmed" });
-    }
-    if (!selectedInquiry?.target_price) {
-      riskIndicators.push({ label: "No target price", severity: "Low", detail: "Commercial value is not yet established" });
-    }
+    if (!selectedInquiry?.company_registration_number) riskIndicators.push({ label: "No company registration", severity: "High", detail: "Company has not provided registration details" });
+    if (!docsText.includes("loi")) riskIndicators.push({ label: "LOI missing", severity: "High", detail: "Letter of Intent has not been submitted" });
+    if (!docsText.includes("passport")) riskIndicators.push({ label: "Passport pending", severity: "Medium", detail: "Identity document required before proceeding" });
+    if (!selectedInquiry?.assigned_broker) riskIndicators.push({ label: "No broker assigned", severity: "Medium", detail: "Inquiry lacks dedicated broker oversight" });
+    if (!selectedInquiry?.company_website) riskIndicators.push({ label: "Website unverified", severity: "Low", detail: "Corporate web presence has not been confirmed" });
+    if (!selectedInquiry?.target_price) riskIndicators.push({ label: "No target price", severity: "Low", detail: "Commercial value is not yet established" });
 
     const significantFields = [
       selectedInquiry?.company_name, selectedInquiry?.company_registration_number, selectedInquiry?.company_website,
@@ -886,27 +886,13 @@ export default function AdminPage() {
     const aiConfidenceScore = Math.round((significantFields.filter(Boolean).length / significantFields.length) * 100);
 
     const nextSteps: Array<{ step: string; priority: "Critical" | "High" | "Medium" | "Low" }> = [];
-    if (!selectedInquiry?.company_registration_number) {
-      nextSteps.push({ step: "Collect company registration number", priority: "Critical" });
-    }
-    if (!docsText.includes("loi")) {
-      nextSteps.push({ step: "Request Letter of Intent (LOI)", priority: "Critical" });
-    }
-    if (!docsText.includes("passport")) {
-      nextSteps.push({ step: "Request passport from primary contact", priority: "High" });
-    }
-    if (!docsText.includes("icpo")) {
-      nextSteps.push({ step: "Obtain ICPO document", priority: "High" });
-    }
-    if (!selectedInquiry?.assigned_broker) {
-      nextSteps.push({ step: "Assign a dedicated broker", priority: "Medium" });
-    }
-    if (!selectedInquiry?.target_price) {
-      nextSteps.push({ step: "Establish target price and commercial terms", priority: "Medium" });
-    }
-    if (nextSteps.length === 0) {
-      nextSteps.push({ step: "Proceed to buyer introduction", priority: "Low" });
-    }
+    if (!selectedInquiry?.company_registration_number) nextSteps.push({ step: "Collect company registration number", priority: "Critical" });
+    if (!docsText.includes("loi")) nextSteps.push({ step: "Request Letter of Intent (LOI)", priority: "Critical" });
+    if (!docsText.includes("passport")) nextSteps.push({ step: "Request passport from primary contact", priority: "High" });
+    if (!docsText.includes("icpo")) nextSteps.push({ step: "Obtain ICPO document", priority: "High" });
+    if (!selectedInquiry?.assigned_broker) nextSteps.push({ step: "Assign a dedicated broker", priority: "Medium" });
+    if (!selectedInquiry?.target_price) nextSteps.push({ step: "Establish target price and commercial terms", priority: "Medium" });
+    if (nextSteps.length === 0) nextSteps.push({ step: "Proceed to buyer introduction", priority: "Low" });
 
     if (!selectedInquiry) {
       return {
@@ -1027,6 +1013,8 @@ export default function AdminPage() {
     { label: "Last Updated", value: selectedInquiry?.updated_at ?? selectedInquiry?.created_at },
   ];
 
+  const selectClass = "w-full rounded-xl border border-white/10 bg-[#071A2D] px-3 py-2.5 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30 [&>option]:bg-[#050B16]";
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(200,162,77,0.13),_transparent_28%),linear-gradient(135deg,_#03070D_0%,_#071A2D_65%,_#02060D_100%)] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
@@ -1067,7 +1055,7 @@ export default function AdminPage() {
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-xl font-semibold text-white">Today's Operations</h2>
-              <p className="mt-1 text-sm text-slate-400">Broker command center for the desk’s highest priority actions and live operations insight.</p>
+              <p className="mt-1 text-sm text-slate-400">Broker command center for the desk's highest priority actions and live operations insight.</p>
             </div>
           </div>
 
@@ -1125,7 +1113,7 @@ export default function AdminPage() {
                             <p className="text-sm font-semibold text-white">{item.company_name ?? item.name ?? "Unnamed inquiry"}</p>
                             <p className="mt-1 text-sm text-slate-300">{parseDocumentAction(item)} • {formatStatusLabel(item.status)}</p>
                           </div>
-                          <span className={`rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${normalizePriorityValue(item.priority) === "high" ? "bg-rose-500/15 text-rose-200" : normalizePriorityValue(item.priority) === "medium" ? "bg-[#C8A24D]/15 text-[#F0D38A]" : "bg-emerald-500/15 text-emerald-200"}`}>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${normalizePriorityValue(item.priority) === "urgent" || normalizePriorityValue(item.priority) === "high" ? "bg-rose-500/15 text-rose-200" : normalizePriorityValue(item.priority) === "normal" ? "bg-[#C8A24D]/15 text-[#F0D38A]" : "bg-emerald-500/15 text-emerald-200"}`}>
                             {normalizePriorityValue(item.priority)}
                           </span>
                         </div>
@@ -1180,20 +1168,90 @@ export default function AdminPage() {
         </section>
 
         <section className="rounded-[28px] border border-white/10 bg-[#050B16]/90 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur sm:p-6">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-white">Inquiry pipeline</h2>
-              <p className="mt-1 text-sm text-slate-400">Monitor all inbound trade opportunities and their current workflow state.</p>
+          <div className="mb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-white">Inquiry pipeline</h2>
+                <p className="mt-1 text-sm text-slate-400">Monitor all inbound trade opportunities and their current workflow state.</p>
+              </div>
+              <label className="w-full sm:w-72">
+                <span className="mb-2 block text-sm text-slate-400">Search inquiries</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search by company, contact, product..."
+                  className="w-full rounded-xl border border-white/10 bg-[#071A2D] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
+                />
+              </label>
             </div>
-            <label className="w-full sm:w-80">
-              <span className="mb-2 block text-sm text-slate-400">Search inquiries</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by name, company, product, country..."
-                className="w-full rounded-xl border border-white/10 bg-[#071A2D] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
-              />
-            </label>
+
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[140px]">
+                <label>
+                  <span className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500">Status</span>
+                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectClass}>
+                    <option value="">All Statuses</option>
+                    {statusOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex-1 min-w-[120px]">
+                <label>
+                  <span className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500">Priority</span>
+                  <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className={selectClass}>
+                    <option value="">All Priorities</option>
+                    {priorityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex-1 min-w-[140px]">
+                <label>
+                  <span className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500">Product</span>
+                  <select value={productFilter} onChange={(e) => setProductFilter(e.target.value)} className={selectClass}>
+                    <option value="">All Products</option>
+                    {filterOptions.products.map((p) => <option key={p} value={p.toLowerCase()}>{p}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex-1 min-w-[140px]">
+                <label>
+                  <span className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500">Inquiry Type</span>
+                  <select value={inquiryTypeFilter} onChange={(e) => setInquiryTypeFilter(e.target.value)} className={selectClass}>
+                    <option value="">All Types</option>
+                    {filterOptions.inquiryTypes.map((t) => <option key={t} value={t.toLowerCase()}>{t}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex-1 min-w-[130px]">
+                <label>
+                  <span className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500">Country</span>
+                  <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className={selectClass}>
+                    <option value="">All Countries</option>
+                    {filterOptions.countries.map((c) => <option key={c} value={c.toLowerCase()}>{c}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex-1 min-w-[120px]">
+                <label>
+                  <span className="mb-1 block text-xs uppercase tracking-[0.2em] text-slate-500">Sort By</span>
+                  <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} className={selectClass}>
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="priority">Priority</option>
+                    <option value="status">Status</option>
+                  </select>
+                </label>
+              </div>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-medium text-slate-400 transition hover:border-white/20 hover:text-white"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
           </div>
 
           {loading ? (
@@ -1206,64 +1264,59 @@ export default function AdminPage() {
             </div>
           ) : filteredInquiries.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-[#071A2D]/70 px-5 py-10 text-center text-slate-400">
-              No inquiries match this search.
+              No inquiries match the current filters.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full border-separate border-spacing-y-2 text-left text-sm">
                 <thead>
                   <tr className="text-slate-400">
-                    <th className="px-3 py-2 font-medium">Name</th>
                     <th className="px-3 py-2 font-medium">Company</th>
-                    <th className="px-3 py-2 font-medium">Email</th>
-                    <th className="px-3 py-2 font-medium">Inquiry Type</th>
+                    <th className="px-3 py-2 font-medium">Contact</th>
                     <th className="px-3 py-2 font-medium">Product</th>
-                    <th className="px-3 py-2 font-medium">Quantity</th>
-                    <th className="px-3 py-2 font-medium">Country</th>
+                    <th className="px-3 py-2 font-medium">Type</th>
                     <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Readiness</th>
+                    <th className="px-3 py-2 font-medium">Priority</th>
+                    <th className="px-3 py-2 font-medium">Broker</th>
                     <th className="px-3 py-2 font-medium">Created</th>
+                    <th className="px-3 py-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredInquiries.map((item) => {
                     const statusClass = statusStyles[normalizeStatusValue(item.status)] ?? statusStyles.new;
-                    const readinessScore = getReadinessScore(item);
-                    const readinessBand = getReadinessBand(readinessScore);
+                    const p = normalizePriorityValue(item.priority);
 
                     return (
                       <tr
                         key={item.id ?? `${item.email}-${item.created_at}`}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => openInquiry(item)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openInquiry(item);
-                          }
-                        }}
-                        className="cursor-pointer rounded-2xl bg-[#071A2D]/80 text-slate-300 outline-none transition hover:bg-[#0B1830] focus:bg-[#0B1830]"
+                        className="rounded-2xl bg-[#071A2D]/80 text-slate-300"
                       >
-                        <td className="rounded-l-2xl px-3 py-3 font-medium text-white">{formatValue(item.contact_name ?? item.name)}</td>
-                        <td className="px-3 py-3">{formatValue(item.company_name)}</td>
-                        <td className="px-3 py-3">{formatValue(item.email)}</td>
-                        <td className="px-3 py-3">{formatValue(item.inquiry_type)}</td>
+                        <td className="rounded-l-2xl px-3 py-3 font-medium text-white">{formatValue(item.company_name)}</td>
+                        <td className="px-3 py-3">{formatValue(item.contact_name ?? item.name)}</td>
                         <td className="px-3 py-3">{formatValue(item.product)}</td>
-                        <td className="px-3 py-3">{formatValue(item.quantity)}</td>
-                        <td className="px-3 py-3">{formatValue(item.country)}</td>
+                        <td className="px-3 py-3">{formatValue(item.inquiry_type)}</td>
                         <td className="px-3 py-3">
                           <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.2em] ${statusClass}`}>
                             {formatStatusLabel(item.status)}
                           </span>
                         </td>
                         <td className="px-3 py-3">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-sm font-medium text-white">{readinessScore}/100</span>
-                            <span className={`text-[10px] uppercase tracking-[0.2em] ${readinessBand.tone}`}>{readinessBand.label}</span>
-                          </div>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] ${p === "urgent" ? "bg-red-500/15 text-red-200" : p === "high" ? "bg-rose-500/15 text-rose-200" : p === "normal" ? "bg-[#C8A24D]/15 text-[#F0D38A]" : "bg-emerald-500/15 text-emerald-200"}`}>
+                            {p}
+                          </span>
                         </td>
-                        <td className="rounded-r-2xl px-3 py-3">{formatDate(item.created_at)}</td>
+                        <td className="px-3 py-3 text-slate-400">{formatValue(item.assigned_broker)}</td>
+                        <td className="px-3 py-3 text-slate-400">{formatDate(item.created_at)}</td>
+                        <td className="rounded-r-2xl px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={() => openInquiry(item)}
+                            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-[#C8A24D]/40 hover:text-white"
+                          >
+                            Open
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1630,7 +1683,7 @@ export default function AdminPage() {
                     <label>
                       <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Priority</span>
                       <select
-                        value={draft?.priority ?? "medium"}
+                        value={draft?.priority ?? "normal"}
                         onChange={(event) => updateDraftField("priority", event.target.value)}
                         className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
                       >
@@ -1654,11 +1707,32 @@ export default function AdminPage() {
                   </label>
 
                   <label>
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Last Contacted</span>
+                    <input
+                      type="datetime-local"
+                      value={draft?.last_contacted_at ?? ""}
+                      onChange={(event) => updateDraftField("last_contacted_at", event.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30 [color-scheme:dark]"
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Internal Notes</span>
+                    <textarea
+                      value={draft?.notes ?? ""}
+                      onChange={(event) => updateDraftField("notes", event.target.value)}
+                      rows={4}
+                      placeholder="Add internal CRM notes for this inquiry..."
+                      className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
+                    />
+                  </label>
+
+                  <label>
                     <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">Internal Broker Notes</span>
                     <textarea
                       value={draft?.broker_notes ?? ""}
                       onChange={(event) => updateDraftField("broker_notes", event.target.value)}
-                      rows={7}
+                      rows={5}
                       placeholder="Add private notes for the internal deal team..."
                       className="w-full rounded-xl border border-white/10 bg-[#050B16] px-4 py-3 text-sm text-white outline-none transition focus:border-[#C8A24D] focus:ring-2 focus:ring-[#C8A24D]/30"
                     />
@@ -1687,6 +1761,31 @@ export default function AdminPage() {
                 >
                   {saving ? "Saving..." : "Save Changes"}
                 </button>
+              </div>
+
+              <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
+                <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Audit History</p>
+                {historyLoading ? (
+                  <p className="mt-3 text-sm text-slate-400">Loading history...</p>
+                ) : history.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-500">No changes recorded yet.</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {history.map((entry) => (
+                      <div key={entry.id} className="rounded-2xl border border-white/10 bg-[#050B16]/70 px-4 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-white">{formatHistoryField(entry.field_changed)}</p>
+                            <p className="mt-0.5 text-xs text-slate-400">
+                              {entry.old_value ?? "—"} → {entry.new_value ?? "—"}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-xs uppercase tracking-[0.2em] text-slate-500">{formatDate(entry.changed_at)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

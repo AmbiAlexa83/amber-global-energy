@@ -42,6 +42,8 @@ export type InquiryServerRecord = {
   priority?: string | null;
   assigned_broker?: string | null;
   broker_notes?: string | null;
+  notes?: string | null;
+  last_contacted_at?: string | null;
   reviewed_at?: string | null;
   qualified_at?: string | null;
   matched_at?: string | null;
@@ -49,9 +51,23 @@ export type InquiryServerRecord = {
   updated_at?: string | null;
   created_at?: string | null;
   message?: string | null;
+  position?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
 };
 
-const parseBrokerState = (brokerNotes?: string | null) => {
+export type HistoryRecord = {
+  id: string;
+  inquiry_id: string;
+  field_changed: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_at: string;
+  changed_by: string;
+};
+
+// Exported so the PATCH route handler can diff assigned_broker for history records
+export const parseBrokerState = (brokerNotes?: string | null) => {
   const raw = brokerNotes?.trim() ?? "";
   const assignedMatch = raw.match(/^Assigned Broker:\s*(.+)$/im);
 
@@ -76,6 +92,9 @@ const serializeBrokerState = (assignedBroker?: string | null, brokerNotes?: stri
   return [trimmedBroker ? `Assigned Broker: ${trimmedBroker}` : null, trimmedNotes].filter(Boolean).join("\n\n");
 };
 
+const INQUIRY_SELECT =
+  "id,name,email,message,source_page,status,priority,broker_notes,notes,last_contacted_at,created_at,updated_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions";
+
 export async function getInquiriesServer() {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
@@ -83,9 +102,7 @@ export async function getInquiriesServer() {
 
   const { data, error } = await supabaseServer
     .from("inquiries")
-    .select(
-      "id,name,email,message,source_page,status,priority,broker_notes,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions",
-    )
+    .select(INQUIRY_SELECT)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -104,7 +121,14 @@ export async function getInquiriesServer() {
 
 export async function updateInquiryServer(
   id: string | number,
-  updates: { status?: string | null; priority?: string | null; assigned_broker?: string | null; broker_notes?: string | null },
+  updates: {
+    status?: string | null;
+    priority?: string | null;
+    assigned_broker?: string | null;
+    broker_notes?: string | null;
+    notes?: string | null;
+    last_contacted_at?: string | null;
+  },
 ) {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
@@ -124,13 +148,19 @@ export async function updateInquiryServer(
     updatePayload.broker_notes = serializeBrokerState(updates.assigned_broker, updates.broker_notes) ?? null;
   }
 
+  if (updates.notes !== undefined) {
+    updatePayload.notes = updates.notes ?? null;
+  }
+
+  if (updates.last_contacted_at !== undefined) {
+    updatePayload.last_contacted_at = updates.last_contacted_at ?? null;
+  }
+
   const { data, error } = await supabaseServer
     .from("inquiries")
     .update(updatePayload)
     .eq("id", id)
-    .select(
-      "id,name,email,message,source_page,status,priority,broker_notes,created_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions",
-    )
+    .select(INQUIRY_SELECT)
     .single();
 
   if (error) {
@@ -143,4 +173,22 @@ export async function updateInquiryServer(
     assigned_broker: parsed.assigned_broker,
     broker_notes: parsed.broker_notes,
   };
+}
+
+export async function getInquiryHistory(inquiryId: string): Promise<HistoryRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("inquiry_history")
+    .select("id,inquiry_id,field_changed,old_value,new_value,changed_at,changed_by")
+    .eq("inquiry_id", inquiryId)
+    .order("changed_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as HistoryRecord[];
 }
