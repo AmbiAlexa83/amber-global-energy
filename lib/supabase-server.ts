@@ -95,6 +95,11 @@ const serializeBrokerState = (assignedBroker?: string | null, brokerNotes?: stri
 const INQUIRY_SELECT =
   "id,name,email,message,source_page,status,priority,broker_notes,notes,last_contacted_at,created_at,updated_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,product,quantity,unit,documents_available,special_instructions";
 
+// Includes every column defined in supabase/schema.sql for public.inquiries, used by
+// the Customer Detail page so it can render fields the dashboard list view omits.
+const FULL_INQUIRY_SELECT =
+  "id,name,email,message,source_page,status,priority,broker_notes,notes,last_contacted_at,reviewed_at,qualified_at,matched_at,closed_at,created_at,updated_at,inquiry_type,company_name,contact_name,position,phone,whatsapp,company_website,country,company_registration_number,verification_status,role_type,product,quantity,unit,delivery_frequency,contract_length,target_price,currency,payment_method,incoterms,loading_port,destination_port,origin_country,destination_country,shipping_method,documents_available,special_instructions";
+
 export async function getInquiriesServer() {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
@@ -117,6 +122,33 @@ export async function getInquiriesServer() {
       broker_notes: parsed.broker_notes,
     };
   });
+}
+
+export async function getInquiryByIdServer(id: string) {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("inquiries")
+    .select(FULL_INQUIRY_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const parsed = parseBrokerState(data.broker_notes);
+  return {
+    ...data,
+    assigned_broker: parsed.assigned_broker,
+    broker_notes: parsed.broker_notes,
+  };
 }
 
 export async function updateInquiryServer(
@@ -191,4 +223,536 @@ export async function getInquiryHistory(inquiryId: string): Promise<HistoryRecor
   }
 
   return (data ?? []) as HistoryRecord[];
+}
+
+export type BrokerRecord = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  region: string | null;
+  specialty: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const BROKER_SELECT = "id,name,email,phone,region,specialty,status,notes,created_at,updated_at";
+
+export async function getBrokersServer(): Promise<BrokerRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("brokers")
+    .select(BROKER_SELECT)
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as BrokerRecord[];
+}
+
+export async function createBrokerServer(input: {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  region?: string | null;
+  specialty?: string | null;
+  notes?: string | null;
+}): Promise<BrokerRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Broker name is required.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("brokers")
+    .insert({
+      name,
+      email: input.email?.trim() || null,
+      phone: input.phone?.trim() || null,
+      region: input.region?.trim() || null,
+      specialty: input.specialty?.trim() || null,
+      notes: input.notes?.trim() || null,
+    })
+    .select(BROKER_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as BrokerRecord;
+}
+
+export async function updateBrokerServer(
+  id: string,
+  updates: {
+    name?: string;
+    email?: string | null;
+    phone?: string | null;
+    region?: string | null;
+    specialty?: string | null;
+    status?: string;
+    notes?: string | null;
+  },
+): Promise<BrokerRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.name !== undefined) updatePayload.name = updates.name.trim();
+  if (updates.email !== undefined) updatePayload.email = updates.email?.trim() || null;
+  if (updates.phone !== undefined) updatePayload.phone = updates.phone?.trim() || null;
+  if (updates.region !== undefined) updatePayload.region = updates.region?.trim() || null;
+  if (updates.specialty !== undefined) updatePayload.specialty = updates.specialty?.trim() || null;
+  if (updates.status !== undefined) updatePayload.status = updates.status;
+  if (updates.notes !== undefined) updatePayload.notes = updates.notes?.trim() || null;
+
+  const { data, error } = await supabaseServer
+    .from("brokers")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(BROKER_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as BrokerRecord;
+}
+
+export type CompanyRecord = {
+  id: string;
+  name: string;
+  registration_number: string | null;
+  website: string | null;
+  country: string | null;
+  industry: string | null;
+  verification_status: string;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const COMPANY_SELECT = "id,name,registration_number,website,country,industry,verification_status,status,notes,created_at,updated_at";
+
+export async function getCompaniesServer(): Promise<CompanyRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("companies")
+    .select(COMPANY_SELECT)
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as CompanyRecord[];
+}
+
+export async function getCompanyByIdServer(id: string): Promise<CompanyRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("companies")
+    .select(COMPANY_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as CompanyRecord | null) ?? null;
+}
+
+export async function createCompanyServer(input: {
+  name: string;
+  registration_number?: string | null;
+  website?: string | null;
+  country?: string | null;
+  industry?: string | null;
+  verification_status?: string | null;
+  notes?: string | null;
+}): Promise<CompanyRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Company name is required.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("companies")
+    .insert({
+      name,
+      registration_number: input.registration_number?.trim() || null,
+      website: input.website?.trim() || null,
+      country: input.country?.trim() || null,
+      industry: input.industry?.trim() || null,
+      verification_status: input.verification_status?.trim() || "unverified",
+      notes: input.notes?.trim() || null,
+    })
+    .select(COMPANY_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as CompanyRecord;
+}
+
+export async function updateCompanyServer(
+  id: string,
+  updates: {
+    name?: string;
+    registration_number?: string | null;
+    website?: string | null;
+    country?: string | null;
+    industry?: string | null;
+    verification_status?: string;
+    status?: string;
+    notes?: string | null;
+  },
+): Promise<CompanyRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.name !== undefined) updatePayload.name = updates.name.trim();
+  if (updates.registration_number !== undefined) updatePayload.registration_number = updates.registration_number?.trim() || null;
+  if (updates.website !== undefined) updatePayload.website = updates.website?.trim() || null;
+  if (updates.country !== undefined) updatePayload.country = updates.country?.trim() || null;
+  if (updates.industry !== undefined) updatePayload.industry = updates.industry?.trim() || null;
+  if (updates.verification_status !== undefined) updatePayload.verification_status = updates.verification_status;
+  if (updates.status !== undefined) updatePayload.status = updates.status;
+  if (updates.notes !== undefined) updatePayload.notes = updates.notes?.trim() || null;
+
+  const { data, error } = await supabaseServer
+    .from("companies")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(COMPANY_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as CompanyRecord;
+}
+
+export type ProjectRecord = {
+  id: string;
+  name: string;
+  company_id: string | null;
+  broker_id: string | null;
+  inquiry_id: string | null;
+  stage: string;
+  estimated_value: string | null;
+  expected_close_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  companies: { name: string } | null;
+  brokers: { name: string } | null;
+  inquiries: { contact_name: string | null; company_name: string | null; name: string | null } | null;
+};
+
+const PROJECT_SELECT =
+  "id,name,company_id,broker_id,inquiry_id,stage,estimated_value,expected_close_date,notes,created_at,updated_at,companies(name),brokers(name),inquiries(contact_name,company_name,name)";
+
+export async function getProjectsServer(): Promise<ProjectRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as ProjectRecord[];
+}
+
+export async function getProjectByIdServer(id: string): Promise<ProjectRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as unknown as ProjectRecord | null) ?? null;
+}
+
+export async function createProjectServer(input: {
+  name: string;
+  company_id?: string | null;
+  broker_id?: string | null;
+  inquiry_id?: string | null;
+  stage?: string | null;
+  estimated_value?: string | null;
+  expected_close_date?: string | null;
+  notes?: string | null;
+}): Promise<ProjectRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Project name is required.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("projects")
+    .insert({
+      name,
+      company_id: input.company_id || null,
+      broker_id: input.broker_id || null,
+      inquiry_id: input.inquiry_id || null,
+      stage: input.stage?.trim() || "prospecting",
+      estimated_value: input.estimated_value?.trim() || null,
+      expected_close_date: input.expected_close_date || null,
+      notes: input.notes?.trim() || null,
+    })
+    .select(PROJECT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as ProjectRecord;
+}
+
+export async function updateProjectServer(
+  id: string,
+  updates: {
+    name?: string;
+    company_id?: string | null;
+    broker_id?: string | null;
+    inquiry_id?: string | null;
+    stage?: string;
+    estimated_value?: string | null;
+    expected_close_date?: string | null;
+    notes?: string | null;
+  },
+): Promise<ProjectRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.name !== undefined) updatePayload.name = updates.name.trim();
+  if (updates.company_id !== undefined) updatePayload.company_id = updates.company_id || null;
+  if (updates.broker_id !== undefined) updatePayload.broker_id = updates.broker_id || null;
+  if (updates.inquiry_id !== undefined) updatePayload.inquiry_id = updates.inquiry_id || null;
+  if (updates.stage !== undefined) updatePayload.stage = updates.stage;
+  if (updates.estimated_value !== undefined) updatePayload.estimated_value = updates.estimated_value?.trim() || null;
+  if (updates.expected_close_date !== undefined) updatePayload.expected_close_date = updates.expected_close_date || null;
+  if (updates.notes !== undefined) updatePayload.notes = updates.notes?.trim() || null;
+
+  const { data, error } = await supabaseServer
+    .from("projects")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(PROJECT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as ProjectRecord;
+}
+
+export type ContractRecord = {
+  id: string;
+  contract_number: string | null;
+  title: string;
+  company_id: string | null;
+  project_id: string | null;
+  broker_id: string | null;
+  status: string;
+  contract_value: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  signed_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  companies: { name: string } | null;
+  projects: { name: string } | null;
+  brokers: { name: string } | null;
+};
+
+const CONTRACT_SELECT =
+  "id,contract_number,title,company_id,project_id,broker_id,status,contract_value,start_date,end_date,signed_date,notes,created_at,updated_at,companies(name),projects(name),brokers(name)";
+
+export async function getContractsServer(): Promise<ContractRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("contracts")
+    .select(CONTRACT_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as ContractRecord[];
+}
+
+export async function getContractByIdServer(id: string): Promise<ContractRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("contracts")
+    .select(CONTRACT_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as unknown as ContractRecord | null) ?? null;
+}
+
+export async function createContractServer(input: {
+  title: string;
+  contract_number?: string | null;
+  company_id?: string | null;
+  project_id?: string | null;
+  broker_id?: string | null;
+  status?: string | null;
+  contract_value?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  signed_date?: string | null;
+  notes?: string | null;
+}): Promise<ContractRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("Contract title is required.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("contracts")
+    .insert({
+      title,
+      contract_number: input.contract_number?.trim() || null,
+      company_id: input.company_id || null,
+      project_id: input.project_id || null,
+      broker_id: input.broker_id || null,
+      status: input.status?.trim() || "draft",
+      contract_value: input.contract_value?.trim() || null,
+      start_date: input.start_date || null,
+      end_date: input.end_date || null,
+      signed_date: input.signed_date || null,
+      notes: input.notes?.trim() || null,
+    })
+    .select(CONTRACT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as ContractRecord;
+}
+
+export async function updateContractServer(
+  id: string,
+  updates: {
+    title?: string;
+    contract_number?: string | null;
+    company_id?: string | null;
+    project_id?: string | null;
+    broker_id?: string | null;
+    status?: string;
+    contract_value?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    signed_date?: string | null;
+    notes?: string | null;
+  },
+): Promise<ContractRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.title !== undefined) updatePayload.title = updates.title.trim();
+  if (updates.contract_number !== undefined) updatePayload.contract_number = updates.contract_number?.trim() || null;
+  if (updates.company_id !== undefined) updatePayload.company_id = updates.company_id || null;
+  if (updates.project_id !== undefined) updatePayload.project_id = updates.project_id || null;
+  if (updates.broker_id !== undefined) updatePayload.broker_id = updates.broker_id || null;
+  if (updates.status !== undefined) updatePayload.status = updates.status;
+  if (updates.contract_value !== undefined) updatePayload.contract_value = updates.contract_value?.trim() || null;
+  if (updates.start_date !== undefined) updatePayload.start_date = updates.start_date || null;
+  if (updates.end_date !== undefined) updatePayload.end_date = updates.end_date || null;
+  if (updates.signed_date !== undefined) updatePayload.signed_date = updates.signed_date || null;
+  if (updates.notes !== undefined) updatePayload.notes = updates.notes?.trim() || null;
+
+  const { data, error } = await supabaseServer
+    .from("contracts")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(CONTRACT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as ContractRecord;
 }
