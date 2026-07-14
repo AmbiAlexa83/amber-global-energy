@@ -17,6 +17,8 @@ import {
 } from "@/lib/inquiry-helpers";
 import CustomerWorkflowForm from "./workflow-form";
 import DocumentUploader from "../../_components/document-uploader";
+import EmailTimeline from "../../_components/email-timeline";
+import ReminderList from "../../_components/reminder-list";
 
 export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -392,6 +394,10 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           </div>
 
           <DocumentUploader entityType="inquiry" entityId={String(inquiry.id)} />
+
+          <EmailTimeline entityType="inquiry" entityId={String(inquiry.id)} />
+
+          <ReminderList entityType="inquiry" entityId={String(inquiry.id)} />
 
           <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
             <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Special Instructions</p>

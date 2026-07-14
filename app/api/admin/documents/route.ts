@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDocumentsForEntityServer, uploadDocumentServer } from "@/lib/supabase-server";
+import { checkPermission } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,6 +22,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const permissionError = await checkPermission("documents");
+    if (permissionError) {
+      return NextResponse.json({ error: permissionError }, { status: 403 });
+    }
+
     const formData = await request.formData();
     const file = formData.get("file");
 

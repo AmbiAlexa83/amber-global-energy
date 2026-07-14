@@ -225,6 +225,24 @@ export async function getInquiryHistory(inquiryId: string): Promise<HistoryRecor
   return (data ?? []) as HistoryRecord[];
 }
 
+export async function getRecentInquiryHistoryServer(limit = 200): Promise<HistoryRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("inquiry_history")
+    .select("id,inquiry_id,field_changed,old_value,new_value,changed_at,changed_by")
+    .order("changed_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as HistoryRecord[];
+}
+
 export type BrokerRecord = {
   id: string;
   name: string;
@@ -785,14 +803,32 @@ const sanitizeFileName = (name: string) => {
   return trimmed.slice(-150) || "file";
 };
 
-export type DocumentEntityLinks = {
+export type EntityLinks = {
   inquiry_id?: string | null;
   company_id?: string | null;
   project_id?: string | null;
   contract_id?: string | null;
 };
 
-export async function getDocumentsForEntityServer(links: DocumentEntityLinks): Promise<DocumentWithUrl[]> {
+export async function getRecentDocumentsServer(limit = 50): Promise<DocumentRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("documents")
+    .select(DOCUMENT_SELECT)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as DocumentRecord[];
+}
+
+export async function getDocumentsForEntityServer(links: EntityLinks): Promise<DocumentWithUrl[]> {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
   }
@@ -828,7 +864,7 @@ export async function getDocumentsForEntityServer(links: DocumentEntityLinks): P
 export async function uploadDocumentServer(input: {
   file: File;
   notes?: string | null;
-  links: DocumentEntityLinks;
+  links: EntityLinks;
 }): Promise<DocumentRecord> {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
@@ -909,4 +945,419 @@ export async function deleteDocumentServer(id: string): Promise<void> {
   }
 
   await supabaseServer.storage.from(DOCUMENT_BUCKET).remove([document.storage_path]);
+}
+
+export type EmailRecord = {
+  id: string;
+  inquiry_id: string | null;
+  company_id: string | null;
+  project_id: string | null;
+  contract_id: string | null;
+  direction: string;
+  subject: string;
+  body: string | null;
+  from_address: string | null;
+  to_address: string | null;
+  sent_at: string;
+  logged_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const EMAIL_SELECT =
+  "id,inquiry_id,company_id,project_id,contract_id,direction,subject,body,from_address,to_address,sent_at,logged_by,created_at,updated_at";
+
+export async function getRecentEmailsServer(limit = 50): Promise<EmailRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("emails")
+    .select(EMAIL_SELECT)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as EmailRecord[];
+}
+
+export async function getEmailsForEntityServer(links: EntityLinks): Promise<EmailRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  let query = supabaseServer.from("emails").select(EMAIL_SELECT).order("sent_at", { ascending: false });
+
+  if (links.inquiry_id) query = query.eq("inquiry_id", links.inquiry_id);
+  else if (links.company_id) query = query.eq("company_id", links.company_id);
+  else if (links.project_id) query = query.eq("project_id", links.project_id);
+  else if (links.contract_id) query = query.eq("contract_id", links.contract_id);
+  else throw new Error("At least one entity link is required to list emails.");
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as EmailRecord[];
+}
+
+export async function createEmailServer(input: {
+  subject: string;
+  direction?: string | null;
+  body?: string | null;
+  from_address?: string | null;
+  to_address?: string | null;
+  sent_at?: string | null;
+  links: EntityLinks;
+}): Promise<EmailRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const subject = input.subject.trim();
+  if (!subject) {
+    throw new Error("Email subject is required.");
+  }
+
+  const { inquiry_id, company_id, project_id, contract_id } = input.links;
+  if (!inquiry_id && !company_id && !project_id && !contract_id) {
+    throw new Error("At least one entity link is required to log an email.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("emails")
+    .insert({
+      inquiry_id: inquiry_id || null,
+      company_id: company_id || null,
+      project_id: project_id || null,
+      contract_id: contract_id || null,
+      subject,
+      direction: input.direction?.trim() || "outbound",
+      body: input.body?.trim() || null,
+      from_address: input.from_address?.trim() || null,
+      to_address: input.to_address?.trim() || null,
+      sent_at: input.sent_at || new Date().toISOString(),
+    })
+    .select(EMAIL_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as EmailRecord;
+}
+
+export async function updateEmailServer(
+  id: string,
+  updates: {
+    subject?: string;
+    direction?: string;
+    body?: string | null;
+    from_address?: string | null;
+    to_address?: string | null;
+    sent_at?: string;
+  },
+): Promise<EmailRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.subject !== undefined) updatePayload.subject = updates.subject.trim();
+  if (updates.direction !== undefined) updatePayload.direction = updates.direction;
+  if (updates.body !== undefined) updatePayload.body = updates.body?.trim() || null;
+  if (updates.from_address !== undefined) updatePayload.from_address = updates.from_address?.trim() || null;
+  if (updates.to_address !== undefined) updatePayload.to_address = updates.to_address?.trim() || null;
+  if (updates.sent_at !== undefined) updatePayload.sent_at = updates.sent_at;
+
+  const { data, error } = await supabaseServer
+    .from("emails")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(EMAIL_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as EmailRecord;
+}
+
+export async function deleteEmailServer(id: string): Promise<void> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { error } = await supabaseServer.from("emails").delete().eq("id", id);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export type AdminUserRecord = {
+  id: string;
+  name: string;
+  email: string | null;
+  role: string;
+  access_code_hash: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const ADMIN_USER_SELECT = "id,name,email,role,access_code_hash,status,created_at,updated_at";
+
+export async function getAdminUsersServer(): Promise<AdminUserRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("admin_users")
+    .select(ADMIN_USER_SELECT)
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as AdminUserRecord[];
+}
+
+export async function getAdminUserByIdServer(id: string): Promise<AdminUserRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("admin_users")
+    .select(ADMIN_USER_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as AdminUserRecord | null) ?? null;
+}
+
+export async function createAdminUserServer(input: {
+  name: string;
+  email?: string | null;
+  role: string;
+  access_code_hash: string;
+}): Promise<AdminUserRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Name is required.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("admin_users")
+    .insert({
+      name,
+      email: input.email?.trim() || null,
+      role: input.role,
+      access_code_hash: input.access_code_hash,
+    })
+    .select(ADMIN_USER_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as AdminUserRecord;
+}
+
+export async function updateAdminUserServer(
+  id: string,
+  updates: {
+    name?: string;
+    email?: string | null;
+    role?: string;
+    status?: string;
+    access_code_hash?: string;
+  },
+): Promise<AdminUserRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.name !== undefined) updatePayload.name = updates.name.trim();
+  if (updates.email !== undefined) updatePayload.email = updates.email?.trim() || null;
+  if (updates.role !== undefined) updatePayload.role = updates.role;
+  if (updates.status !== undefined) updatePayload.status = updates.status;
+  if (updates.access_code_hash !== undefined) updatePayload.access_code_hash = updates.access_code_hash;
+
+  const { data, error } = await supabaseServer
+    .from("admin_users")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(ADMIN_USER_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as AdminUserRecord;
+}
+
+export type ReminderRecord = {
+  id: string;
+  inquiry_id: string | null;
+  company_id: string | null;
+  project_id: string | null;
+  contract_id: string | null;
+  title: string;
+  notes: string | null;
+  due_at: string;
+  status: string;
+  assigned_to: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const REMINDER_SELECT =
+  "id,inquiry_id,company_id,project_id,contract_id,title,notes,due_at,status,assigned_to,created_at,updated_at";
+
+export async function getRemindersForEntityServer(links: EntityLinks): Promise<ReminderRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  let query = supabaseServer.from("reminders").select(REMINDER_SELECT).order("due_at", { ascending: true });
+
+  if (links.inquiry_id) query = query.eq("inquiry_id", links.inquiry_id);
+  else if (links.company_id) query = query.eq("company_id", links.company_id);
+  else if (links.project_id) query = query.eq("project_id", links.project_id);
+  else if (links.contract_id) query = query.eq("contract_id", links.contract_id);
+  else throw new Error("At least one entity link is required to list reminders.");
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as ReminderRecord[];
+}
+
+export async function getAllRemindersServer(): Promise<ReminderRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("reminders")
+    .select(REMINDER_SELECT)
+    .order("due_at", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as ReminderRecord[];
+}
+
+export async function createReminderServer(input: {
+  title: string;
+  notes?: string | null;
+  due_at: string;
+  links: EntityLinks;
+}): Promise<ReminderRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("Reminder title is required.");
+  }
+
+  if (!input.due_at) {
+    throw new Error("A due date is required.");
+  }
+
+  const { inquiry_id, company_id, project_id, contract_id } = input.links;
+  if (!inquiry_id && !company_id && !project_id && !contract_id) {
+    throw new Error("At least one entity link is required to create a reminder.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("reminders")
+    .insert({
+      inquiry_id: inquiry_id || null,
+      company_id: company_id || null,
+      project_id: project_id || null,
+      contract_id: contract_id || null,
+      title,
+      notes: input.notes?.trim() || null,
+      due_at: input.due_at,
+    })
+    .select(REMINDER_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as ReminderRecord;
+}
+
+export async function updateReminderServer(
+  id: string,
+  updates: { title?: string; notes?: string | null; due_at?: string; status?: string },
+): Promise<ReminderRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.title !== undefined) updatePayload.title = updates.title.trim();
+  if (updates.notes !== undefined) updatePayload.notes = updates.notes?.trim() || null;
+  if (updates.due_at !== undefined) updatePayload.due_at = updates.due_at;
+  if (updates.status !== undefined) updatePayload.status = updates.status;
+
+  const { data, error } = await supabaseServer
+    .from("reminders")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(REMINDER_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as ReminderRecord;
+}
+
+export async function deleteReminderServer(id: string): Promise<void> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { error } = await supabaseServer.from("reminders").delete().eq("id", id);
+  if (error) {
+    throw new Error(error.message);
+  }
 }

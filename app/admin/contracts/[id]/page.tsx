@@ -9,6 +9,8 @@ import {
 import { formatContractStatusLabel, contractStatusStyles } from "@/lib/contract-helpers";
 import ContractForm from "./contract-form";
 import DocumentUploader from "../../_components/document-uploader";
+import EmailTimeline from "../../_components/email-timeline";
+import ReminderList from "../../_components/reminder-list";
 
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -49,6 +51,10 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           <ContractForm contract={contract} companies={companies} projects={projects} brokers={brokers} />
 
           <DocumentUploader entityType="contract" entityId={contract.id} />
+
+          <EmailTimeline entityType="contract" entityId={contract.id} />
+
+          <ReminderList entityType="contract" entityId={contract.id} />
 
           {contract.company_id ? (
             <Link

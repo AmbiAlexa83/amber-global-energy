@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBrokersServer, createBrokerServer } from "@/lib/supabase-server";
+import { checkPermission } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
@@ -13,6 +14,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const permissionError = await checkPermission("brokers");
+    if (permissionError) {
+      return NextResponse.json({ error: permissionError }, { status: 403 });
+    }
+
     const payload = await request.json().catch(() => null);
     const { name, email, phone, region, specialty, notes } = payload ?? {};
 

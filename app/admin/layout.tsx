@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import IdentityBar from "./_components/identity-bar";
 
 export const metadata: Metadata = {
   title: "Amber Global Energy | Premium International Brokerage",
@@ -7,5 +8,10 @@ export const metadata: Metadata = {
 };
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
-  return children;
+  return (
+    <>
+      <IdentityBar />
+      {children}
+    </>
+  );
 }

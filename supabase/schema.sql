@@ -288,3 +288,114 @@ create index if not exists documents_contract_id_idx
 
 -- No public RLS policies — accessible via service role only
 alter table public.documents enable row level security;
+
+-- ─── Phase 3: Email timeline ─────────────────────────────────────────────────
+
+create table if not exists public.emails (
+  id           uuid        primary key default gen_random_uuid(),
+  inquiry_id   uuid        references public.inquiries(id) on delete cascade,
+  company_id   uuid        references public.companies(id) on delete cascade,
+  project_id   uuid        references public.projects(id) on delete cascade,
+  contract_id  uuid        references public.contracts(id) on delete cascade,
+  direction    text        not null default 'outbound',
+  subject      text        not null,
+  body         text,
+  from_address text,
+  to_address   text,
+  sent_at      timestamptz not null default now(),
+  logged_by    text        not null default 'admin',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+drop trigger if exists emails_set_updated_at on public.emails;
+create trigger emails_set_updated_at
+  before update on public.emails
+  for each row execute function public.set_updated_at();
+
+create index if not exists emails_inquiry_id_idx
+  on public.emails(inquiry_id);
+
+create index if not exists emails_company_id_idx
+  on public.emails(company_id);
+
+create index if not exists emails_project_id_idx
+  on public.emails(project_id);
+
+create index if not exists emails_contract_id_idx
+  on public.emails(contract_id);
+
+create index if not exists emails_sent_at_idx
+  on public.emails(sent_at);
+
+-- No public RLS policies — accessible via service role only
+alter table public.emails enable row level security;
+
+-- ─── Phase 3: Role-based permissions ─────────────────────────────────────────
+-- Internal identity/role layer only — does not touch the site's HTTP Basic
+-- Auth gate (proxy.ts), which remains the perimeter security boundary.
+
+create table if not exists public.admin_users (
+  id                uuid        primary key default gen_random_uuid(),
+  name              text        not null,
+  email             text,
+  role              text        not null default 'admin' check (role in ('admin', 'broker', 'viewer')),
+  access_code_hash  text        not null,
+  status            text        not null default 'active',
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+
+drop trigger if exists admin_users_set_updated_at on public.admin_users;
+create trigger admin_users_set_updated_at
+  before update on public.admin_users
+  for each row execute function public.set_updated_at();
+
+create index if not exists admin_users_status_idx
+  on public.admin_users(status);
+
+-- No public RLS policies — accessible via service role only
+alter table public.admin_users enable row level security;
+
+-- ─── Phase 3: Calendar and follow-up reminders ───────────────────────────────
+
+create table if not exists public.reminders (
+  id          uuid        primary key default gen_random_uuid(),
+  inquiry_id  uuid        references public.inquiries(id) on delete cascade,
+  company_id  uuid        references public.companies(id) on delete cascade,
+  project_id  uuid        references public.projects(id) on delete cascade,
+  contract_id uuid        references public.contracts(id) on delete cascade,
+  title       text        not null,
+  notes       text,
+  due_at      timestamptz not null,
+  status      text        not null default 'pending',
+  assigned_to uuid        references public.admin_users(id) on delete set null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+drop trigger if exists reminders_set_updated_at on public.reminders;
+create trigger reminders_set_updated_at
+  before update on public.reminders
+  for each row execute function public.set_updated_at();
+
+create index if not exists reminders_due_at_idx
+  on public.reminders(due_at);
+
+create index if not exists reminders_status_idx
+  on public.reminders(status);
+
+create index if not exists reminders_inquiry_id_idx
+  on public.reminders(inquiry_id);
+
+create index if not exists reminders_company_id_idx
+  on public.reminders(company_id);
+
+create index if not exists reminders_project_id_idx
+  on public.reminders(project_id);
+
+create index if not exists reminders_contract_id_idx
+  on public.reminders(contract_id);
+
+-- No public RLS policies — accessible via service role only
+alter table public.reminders enable row level security;

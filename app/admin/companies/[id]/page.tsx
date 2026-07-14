@@ -6,6 +6,8 @@ import { formatProjectStageLabel, projectStageStyles } from "@/lib/project-helpe
 import { formatContractStatusLabel, contractStatusStyles } from "@/lib/contract-helpers";
 import CompanyForm from "./company-form";
 import DocumentUploader from "../../_components/document-uploader";
+import EmailTimeline from "../../_components/email-timeline";
+import ReminderList from "../../_components/reminder-list";
 
 export default async function CompanyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -48,6 +50,10 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
           <CompanyForm company={company} />
 
           <DocumentUploader entityType="company" entityId={company.id} />
+
+          <EmailTimeline entityType="company" entityId={company.id} />
+
+          <ReminderList entityType="company" entityId={company.id} />
 
           <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
             <p className="text-sm uppercase tracking-[0.25em] text-slate-400">
