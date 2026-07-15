@@ -1389,3 +1389,209 @@ export async function deleteReminderServer(id: string): Promise<void> {
     throw new Error(error.message);
   }
 }
+
+// ─── Deal Matching (Phase 5.1) ───────────────────────────────────────────
+// Decision-support only — every row here is a suggestion for human review.
+// Nothing in this file writes to public.inquiries, sends communication, or
+// changes any other resource as a side effect of a match.
+
+export type DealMatchRecord = {
+  id: string;
+  buyer_inquiry_id: string;
+  seller_inquiry_id: string;
+  buyer_company_id: string | null;
+  seller_company_id: string | null;
+  assigned_broker_id: string | null;
+  compatibility_score: number;
+  opportunity_score: number;
+  confidence: string;
+  match_version: string;
+  product_score: number;
+  quantity_score: number;
+  geography_score: number;
+  incoterms_score: number;
+  payment_terms_score: number;
+  timing_score: number;
+  document_readiness_score: number;
+  trust_score: number;
+  risk_penalty: number;
+  explanation: Record<string, unknown>;
+  strengths: string[];
+  conflicts: string[];
+  missing_information: string[];
+  recommended_next_action: string | null;
+  match_status: string;
+  broker_decision: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  ai_recommendation: string | null;
+  ai_reasoning: string | null;
+  final_outcome: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const DEAL_MATCH_SELECT =
+  "id,buyer_inquiry_id,seller_inquiry_id,buyer_company_id,seller_company_id,assigned_broker_id,compatibility_score,opportunity_score,confidence,match_version,product_score,quantity_score,geography_score,incoterms_score,payment_terms_score,timing_score,document_readiness_score,trust_score,risk_penalty,explanation,strengths,conflicts,missing_information,recommended_next_action,match_status,broker_decision,reviewed_by,reviewed_at,ai_recommendation,ai_reasoning,final_outcome,created_at,updated_at";
+
+export async function getDealMatchesServer(filters?: {
+  status?: string | null;
+  inquiryId?: string | null;
+}): Promise<DealMatchRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  let query = supabaseServer.from("deal_matches").select(DEAL_MATCH_SELECT).order("opportunity_score", { ascending: false });
+
+  if (filters?.status) query = query.eq("match_status", filters.status);
+  // inquiryId is interpolated into a raw PostgREST filter string below, so it
+  // must be validated as a UUID first — otherwise a crafted query param could
+  // inject additional filter clauses.
+  if (filters?.inquiryId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filters.inquiryId)) {
+    query = query.or(`buyer_inquiry_id.eq.${filters.inquiryId},seller_inquiry_id.eq.${filters.inquiryId}`);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as DealMatchRecord[];
+}
+
+export async function getDealMatchByIdServer(id: string): Promise<DealMatchRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer.from("deal_matches").select(DEAL_MATCH_SELECT).eq("id", id).maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? null) as DealMatchRecord | null;
+}
+
+// Insert-or-refresh a computed match. Uses the (buyer_inquiry_id,
+// seller_inquiry_id) unique constraint so recomputing scores for the same
+// pair updates the existing row (and preserves its review state) rather than
+// creating a duplicate.
+export async function upsertDealMatchServer(input: {
+  buyer_inquiry_id: string;
+  seller_inquiry_id: string;
+  buyer_company_id?: string | null;
+  seller_company_id?: string | null;
+  assigned_broker_id?: string | null;
+  compatibility_score: number;
+  opportunity_score: number;
+  confidence: string;
+  match_version: string;
+  product_score: number;
+  quantity_score: number;
+  geography_score: number;
+  incoterms_score: number;
+  payment_terms_score: number;
+  timing_score: number;
+  document_readiness_score: number;
+  trust_score: number;
+  risk_penalty: number;
+  explanation: Record<string, unknown>;
+  strengths: string[];
+  conflicts: string[];
+  missing_information: string[];
+  recommended_next_action: string | null;
+}): Promise<DealMatchRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("deal_matches")
+    .upsert(
+      {
+        buyer_inquiry_id: input.buyer_inquiry_id,
+        seller_inquiry_id: input.seller_inquiry_id,
+        buyer_company_id: input.buyer_company_id ?? null,
+        seller_company_id: input.seller_company_id ?? null,
+        assigned_broker_id: input.assigned_broker_id ?? null,
+        compatibility_score: input.compatibility_score,
+        opportunity_score: input.opportunity_score,
+        confidence: input.confidence,
+        match_version: input.match_version,
+        product_score: input.product_score,
+        quantity_score: input.quantity_score,
+        geography_score: input.geography_score,
+        incoterms_score: input.incoterms_score,
+        payment_terms_score: input.payment_terms_score,
+        timing_score: input.timing_score,
+        document_readiness_score: input.document_readiness_score,
+        trust_score: input.trust_score,
+        risk_penalty: input.risk_penalty,
+        explanation: input.explanation,
+        strengths: input.strengths,
+        conflicts: input.conflicts,
+        missing_information: input.missing_information,
+        recommended_next_action: input.recommended_next_action,
+      },
+      { onConflict: "buyer_inquiry_id,seller_inquiry_id" },
+    )
+    .select(DEAL_MATCH_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as DealMatchRecord;
+}
+
+// The only mutation a broker/admin can make to an existing match: record a
+// human review decision. Never touches score fields, never touches
+// public.inquiries.
+export async function updateDealMatchReviewServer(
+  id: string,
+  updates: { match_status: string; broker_decision?: string | null; reviewed_by?: string | null },
+): Promise<DealMatchRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  // broker_decision is only overwritten when explicitly provided — a
+  // workflow-only status change (e.g. moving an already-approved match to
+  // "introduced") must not silently clear a prior broker decision.
+  const updatePayload: Record<string, string | null> = {
+    match_status: updates.match_status,
+    reviewed_by: updates.reviewed_by ?? null,
+    reviewed_at: new Date().toISOString(),
+  };
+  if (updates.broker_decision !== undefined) {
+    updatePayload.broker_decision = updates.broker_decision;
+  }
+
+  const { data, error } = await supabaseServer
+    .from("deal_matches")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(DEAL_MATCH_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as DealMatchRecord;
+}
+
+export async function deleteDealMatchServer(id: string): Promise<void> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { error } = await supabaseServer.from("deal_matches").delete().eq("id", id);
+  if (error) {
+    throw new Error(error.message);
+  }
+}

@@ -19,7 +19,8 @@ export type ManagedResource =
   | "documents"
   | "emails"
   | "admin_users"
-  | "reminders";
+  | "reminders"
+  | "deal_matches";
 
 const BROKER_RESTRICTED_RESOURCES = new Set<ManagedResource>(["brokers", "companies", "admin_users"]);
 

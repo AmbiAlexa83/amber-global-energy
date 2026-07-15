@@ -399,3 +399,81 @@ create index if not exists reminders_contract_id_idx
 
 -- No public RLS policies — accessible via service role only
 alter table public.reminders enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration 012 — Deal Matching Foundation (Phase 5.1)
+--
+-- Decision-support feature only. Stores deterministic, explainable match
+-- recommendations for human review — never triggers automatic introductions,
+-- status changes, or outbound communication.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.deal_matches (
+  id                       uuid        primary key default gen_random_uuid(),
+
+  buyer_inquiry_id         uuid        not null references public.inquiries(id) on delete cascade,
+  seller_inquiry_id        uuid        not null references public.inquiries(id) on delete cascade,
+
+  buyer_company_id         uuid        references public.companies(id) on delete set null,
+  seller_company_id        uuid        references public.companies(id) on delete set null,
+  assigned_broker_id       uuid        references public.brokers(id) on delete set null,
+
+  compatibility_score      integer     not null,
+  opportunity_score        integer     not null,
+  confidence               text        not null
+    check (confidence in ('Strong Match', 'Potential Match', 'Needs Information', 'High Risk', 'Not Compatible')),
+  match_version            text        not null default 'v1',
+
+  product_score            integer     not null,
+  quantity_score           integer     not null,
+  geography_score          integer     not null,
+  incoterms_score          integer     not null,
+  payment_terms_score      integer     not null,
+  timing_score             integer     not null,
+  document_readiness_score integer     not null,
+  trust_score              integer     not null,
+  risk_penalty             integer     not null default 0,
+
+  explanation              jsonb       not null default '{}'::jsonb,
+  strengths                jsonb       not null default '[]'::jsonb,
+  conflicts                jsonb       not null default '[]'::jsonb,
+  missing_information      jsonb       not null default '[]'::jsonb,
+  recommended_next_action  text,
+
+  match_status             text        not null default 'suggested'
+    check (match_status in ('suggested', 'under_review', 'approved', 'rejected', 'needs_information', 'introduced', 'archived')),
+  broker_decision          text
+    check (broker_decision is null or broker_decision in ('approved', 'rejected', 'needs_information')),
+  reviewed_by              uuid        references public.admin_users(id) on delete set null,
+  reviewed_at              timestamptz,
+
+  ai_recommendation        text,
+  ai_reasoning             text,
+
+  final_outcome            text,
+
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now(),
+
+  unique (buyer_inquiry_id, seller_inquiry_id)
+);
+
+drop trigger if exists deal_matches_set_updated_at on public.deal_matches;
+create trigger deal_matches_set_updated_at
+  before update on public.deal_matches
+  for each row execute function public.set_updated_at();
+
+create index if not exists deal_matches_buyer_inquiry_id_idx
+  on public.deal_matches(buyer_inquiry_id);
+
+create index if not exists deal_matches_seller_inquiry_id_idx
+  on public.deal_matches(seller_inquiry_id);
+
+create index if not exists deal_matches_status_idx
+  on public.deal_matches(match_status);
+
+create index if not exists deal_matches_opportunity_score_idx
+  on public.deal_matches(opportunity_score);
+
+-- No public RLS policies — accessible via service role only
+alter table public.deal_matches enable row level security;
