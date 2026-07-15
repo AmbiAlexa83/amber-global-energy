@@ -441,7 +441,7 @@ export default function AdminPage() {
           <div className="flex flex-col items-center gap-9 text-center">
             <div className="space-y-3">
               <p className="text-sm uppercase tracking-[0.35em] text-[#C8A24D]">Amber Global Energy</p>
-              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">Internal inquiry operations dashboard</h1>
+              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">Internal Inquiry Operations Dashboard</h1>
             </div>
             <p className="mx-auto max-w-2xl text-sm leading-7 text-slate-400 sm:text-base">
               A secure operating foundation for monitoring trade inquiries, prioritizing opportunities, and tracking follow-up status across the network.
