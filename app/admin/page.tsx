@@ -33,9 +33,20 @@ import {
   computeCommercialIntelligence,
   computeTrustProfile,
 } from "@/lib/inquiry-helpers";
+import type { ExecutiveIntelligenceReport } from "@/lib/executive-analytics";
+import KpiGrid from "./_components/kpi-grid";
+import PipelineIntelligence from "./_components/pipeline-intelligence";
+import RevenueForecast from "./_components/revenue-forecast";
+import BrokerIntelligence from "./_components/broker-intelligence";
+import GeographicIntelligence from "./_components/geographic-intelligence";
+import ExecutiveAlertsPanel from "./_components/executive-alerts-panel";
+import ExecutiveSummary from "./_components/executive-summary";
 
 export default function AdminPage() {
   const [inquiries, setInquiries] = useState<InquiryRecord[]>([]);
+  const [executiveReport, setExecutiveReport] = useState<ExecutiveIntelligenceReport | null>(null);
+  const [executiveLoading, setExecutiveLoading] = useState(true);
+  const [executiveError, setExecutiveError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
@@ -112,6 +123,46 @@ export default function AdminPage() {
     };
 
     loadInquiries();
+    return () => { isActive = false; };
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadExecutiveReport = async () => {
+      try {
+        setExecutiveLoading(true);
+        setExecutiveError("");
+
+        const response = await fetch("/api/admin/executive-analytics", {
+          method: "GET",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+        });
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to load executive analytics.");
+        }
+
+        if (isActive) {
+          setExecutiveReport(payload.data ?? null);
+        }
+      } catch (err) {
+        if (isActive) {
+          const message = err instanceof Error ? err.message : "Unable to load executive analytics.";
+          console.error("[Admin] executive analytics error", message);
+          setExecutiveError(message);
+        }
+      } finally {
+        if (isActive) {
+          setExecutiveLoading(false);
+        }
+      }
+    };
+
+    loadExecutiveReport();
     return () => { isActive = false; };
   }, []);
 
@@ -511,6 +562,35 @@ export default function AdminPage() {
             </div>
           </div>
         </header>
+
+        <section className="flex flex-col gap-6">
+          <div>
+            <p className="text-sm uppercase tracking-[0.3em] text-[#C8A24D]">Executive Intelligence</p>
+            <h2 className="mt-1 text-2xl font-semibold text-white">Command Center</h2>
+          </div>
+
+          {executiveLoading ? (
+            <div className="rounded-2xl border border-white/10 bg-[#071A2D]/70 px-5 py-10 text-center text-slate-400">
+              Loading executive intelligence...
+            </div>
+          ) : executiveError ? (
+            <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-5 py-10 text-center text-rose-200">
+              {executiveError}
+            </div>
+          ) : executiveReport ? (
+            <>
+              <KpiGrid kpis={executiveReport.kpis} />
+              <ExecutiveSummary summary={executiveReport.summary} />
+              <div className="grid gap-6 xl:grid-cols-2">
+                <PipelineIntelligence pipeline={executiveReport.pipeline} />
+                <RevenueForecast forecast={executiveReport.forecast} />
+              </div>
+              <ExecutiveAlertsPanel alerts={executiveReport.executiveAlerts} />
+              <BrokerIntelligence brokerMetrics={executiveReport.brokerMetrics} />
+              <GeographicIntelligence geographicMetrics={executiveReport.geographicMetrics} />
+            </>
+          ) : null}
+        </section>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[

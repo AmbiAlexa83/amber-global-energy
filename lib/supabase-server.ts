@@ -124,6 +124,34 @@ export async function getInquiriesServer() {
   });
 }
 
+// Additive, analytics-only fetch — reuses the existing FULL_INQUIRY_SELECT
+// (already used by the Customer Detail page) so executive analytics can read
+// geography/value fields (target_price, destination_country, origin_country,
+// role_type) without touching getInquiriesServer() or any of its callers.
+export async function getInquiriesForAnalyticsServer() {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("inquiries")
+    .select(FULL_INQUIRY_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((item) => {
+    const parsed = parseBrokerState(item.broker_notes);
+    return {
+      ...item,
+      assigned_broker: parsed.assigned_broker,
+      broker_notes: parsed.broker_notes,
+    };
+  });
+}
+
 export async function getInquiryByIdServer(id: string) {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
