@@ -5,12 +5,15 @@ import { formatContractStatusLabel } from "@/lib/contract-helpers";
 import type {
   BrokerRecord,
   CompanyRecord,
+  CompanyContactRecord,
   ProjectRecord,
   ContractRecord,
   DocumentRecord,
   EmailRecord,
   AdminUserRecord,
+  SupportRequestRecord,
 } from "@/lib/supabase-server";
+import { formatSupportCategoryLabel, formatSupportPriorityLabel } from "@/lib/support-request-helpers";
 
 export type ActivityEvent = {
   id: string;
@@ -28,6 +31,8 @@ export const buildActivityFeed = (data: {
   inquiryHistory: HistoryRecord[];
   brokers: BrokerRecord[];
   companies: CompanyRecord[];
+  companyContacts: CompanyContactRecord[];
+  supportRequests: SupportRequestRecord[];
   projects: ProjectRecord[];
   contracts: ContractRecord[];
   documents: DocumentRecord[];
@@ -105,6 +110,45 @@ export const buildActivityFeed = (data: {
         href: `/admin/companies/${company.id}`,
       });
     }
+  }
+
+  // Company contacts have no field-level history table (unlike inquiries via
+  // inquiry_history), so — same as companies/projects/contracts below — only
+  // generic created/updated events are derivable here. This does not
+  // distinguish "marked primary" or "deactivated" from any other edit.
+  for (const contact of data.companyContacts) {
+    const contactName = [contact.first_name, contact.last_name].filter(Boolean).join(" ");
+    const company = companyById.get(contact.company_id);
+    const label = `${contactName}${company ? ` — ${company.name}` : ""}`;
+    events.push({
+      id: `company-contact-created-${contact.id}`,
+      timestamp: contact.created_at,
+      icon: "👤",
+      title: "Company contact added",
+      detail: label,
+      href: contact.company_id ? `/admin/companies/${contact.company_id}` : null,
+    });
+    if (contact.updated_at !== contact.created_at) {
+      events.push({
+        id: `company-contact-updated-${contact.id}-${contact.updated_at}`,
+        timestamp: contact.updated_at,
+        icon: "👤",
+        title: "Company contact updated",
+        detail: label,
+        href: contact.company_id ? `/admin/companies/${contact.company_id}` : null,
+      });
+    }
+  }
+
+  for (const request of data.supportRequests) {
+    events.push({
+      id: `support-request-created-${request.id}`,
+      timestamp: request.created_at,
+      icon: "🛟",
+      title: "Support request submitted",
+      detail: `${request.companies?.name ?? "Unknown company"} — Category: ${formatSupportCategoryLabel(request.category)} • Priority: ${formatSupportPriorityLabel(request.priority)}`,
+      href: `/admin/companies/${request.company_id}`,
+    });
   }
 
   for (const project of data.projects) {

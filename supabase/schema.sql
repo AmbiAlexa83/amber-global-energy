@@ -477,3 +477,178 @@ create index if not exists deal_matches_opportunity_score_idx
 
 -- No public RLS policies — accessible via service role only
 alter table public.deal_matches enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration 013 — Persistent Company Contacts (Phase 5.2, Stage 5.2.1)
+--
+-- A company can retain named business contacts (CEO, Procurement Director,
+-- Fuel Trader, etc.) across every inquiry, project, contract, document, and
+-- deal match it is ever linked to, instead of re-entering contact details.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.company_contacts (
+  id                        uuid        primary key default gen_random_uuid(),
+  company_id                uuid        not null references public.companies(id) on delete cascade,
+  first_name                text        not null,
+  last_name                 text,
+  job_title                 text,
+  department                text,
+  email                     text,
+  phone                     text,
+  mobile                    text,
+  country                   text,
+  preferred_contact_method  text,
+  is_primary                boolean     not null default false,
+  status                    text        not null default 'active',
+  notes                     text,
+  created_at                timestamptz not null default now(),
+  updated_at                timestamptz not null default now(),
+
+  constraint company_contacts_first_name_not_blank check (btrim(first_name) <> ''),
+  constraint company_contacts_status_check check (status in ('active', 'inactive')),
+  constraint company_contacts_preferred_contact_method_check
+    check (preferred_contact_method is null or preferred_contact_method in ('email', 'phone', 'mobile'))
+);
+
+drop trigger if exists company_contacts_set_updated_at on public.company_contacts;
+create trigger company_contacts_set_updated_at
+  before update on public.company_contacts
+  for each row execute function public.set_updated_at();
+
+create index if not exists company_contacts_company_id_idx
+  on public.company_contacts(company_id);
+
+create index if not exists company_contacts_status_idx
+  on public.company_contacts(status);
+
+create index if not exists company_contacts_email_lower_idx
+  on public.company_contacts(lower(email))
+  where email is not null;
+
+create index if not exists company_contacts_company_id_is_primary_idx
+  on public.company_contacts(company_id, is_primary);
+
+create index if not exists company_contacts_company_id_status_idx
+  on public.company_contacts(company_id, status);
+
+create unique index if not exists company_contacts_one_active_primary_idx
+  on public.company_contacts(company_id)
+  where is_primary = true and status = 'active';
+
+-- No public RLS policies — accessible via service role only
+alter table public.company_contacts enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration 014 — Executive Client Support Center (Phase 5.2, Stage 5.2.2.1)
+--
+-- Lets clients and brokers raise support requests against a company,
+-- optionally attributed to a specific company contact, tracked to resolution.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.support_requests (
+  id           uuid        primary key default gen_random_uuid(),
+  company_id   uuid        not null references public.companies(id) on delete cascade,
+  contact_id   uuid        references public.company_contacts(id) on delete set null,
+  category     text        not null
+    check (category in ('technical_problem', 'brokerage_inquiry', 'account_question', 'suggestion', 'general_feedback', 'report_bug')),
+  priority     text        not null default 'normal'
+    check (priority in ('normal', 'high', 'urgent')),
+  subject      text        not null,
+  message      text        not null,
+  status       text        not null default 'new'
+    check (status in ('new', 'open', 'in_progress', 'waiting_for_client', 'resolved', 'closed')),
+  assigned_to  uuid        references public.admin_users(id) on delete set null,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  resolved_at  timestamptz,
+
+  constraint support_requests_subject_not_blank check (btrim(subject) <> ''),
+  constraint support_requests_message_not_blank check (btrim(message) <> '')
+);
+
+drop trigger if exists support_requests_set_updated_at on public.support_requests;
+create trigger support_requests_set_updated_at
+  before update on public.support_requests
+  for each row execute function public.set_updated_at();
+
+create index if not exists support_requests_company_id_idx
+  on public.support_requests(company_id);
+
+create index if not exists support_requests_contact_id_idx
+  on public.support_requests(contact_id);
+
+create index if not exists support_requests_status_idx
+  on public.support_requests(status);
+
+create index if not exists support_requests_priority_idx
+  on public.support_requests(priority);
+
+create index if not exists support_requests_assigned_to_idx
+  on public.support_requests(assigned_to);
+
+create index if not exists support_requests_created_at_idx
+  on public.support_requests(created_at);
+
+-- No public RLS policies — accessible via service role only
+alter table public.support_requests enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration 015 — Intelligent Notifications & Email Automation (Phase 5.2, Stage 5.2.3)
+--
+-- A delivery-attempt log for support-request transactional emails
+-- (acknowledgment, internal alert, status-change notices) — records what was
+-- sent, to whom, and whether it succeeded, and provides the unique
+-- idempotency key that prevents duplicate sends for the same event.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create table if not exists public.support_notifications (
+  id                   uuid        primary key default gen_random_uuid(),
+  support_request_id   uuid        not null references public.support_requests(id) on delete cascade,
+  company_id           uuid        not null references public.companies(id) on delete cascade,
+  contact_id           uuid        references public.company_contacts(id) on delete set null,
+  notification_type    text        not null
+    check (notification_type in ('support_acknowledgment', 'support_internal_alert', 'support_waiting_for_client', 'support_resolved', 'support_closed')),
+  recipient_email      text        not null,
+  recipient_name       text,
+  subject              text        not null,
+  provider              text,
+  provider_message_id  text,
+  delivery_status      text        not null default 'pending'
+    check (delivery_status in ('pending', 'sent', 'failed', 'skipped')),
+  error_message        text,
+  metadata             jsonb       not null default '{}'::jsonb,
+  idempotency_key      text        not null,
+  attempted_at         timestamptz,
+  sent_at              timestamptz,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now(),
+
+  constraint support_notifications_recipient_email_not_blank check (btrim(recipient_email) <> ''),
+  constraint support_notifications_subject_not_blank check (btrim(subject) <> '')
+);
+
+drop trigger if exists support_notifications_set_updated_at on public.support_notifications;
+create trigger support_notifications_set_updated_at
+  before update on public.support_notifications
+  for each row execute function public.set_updated_at();
+
+create index if not exists support_notifications_support_request_id_idx
+  on public.support_notifications(support_request_id);
+
+create index if not exists support_notifications_company_id_idx
+  on public.support_notifications(company_id);
+
+create index if not exists support_notifications_delivery_status_idx
+  on public.support_notifications(delivery_status);
+
+create index if not exists support_notifications_notification_type_idx
+  on public.support_notifications(notification_type);
+
+create index if not exists support_notifications_created_at_idx
+  on public.support_notifications(created_at);
+
+create unique index if not exists support_notifications_idempotency_key_idx
+  on public.support_notifications(idempotency_key);
+
+-- No public RLS policies — accessible via service role only
+alter table public.support_notifications enable row level security;

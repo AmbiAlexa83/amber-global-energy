@@ -512,6 +512,316 @@ export async function updateCompanyServer(
   return data as CompanyRecord;
 }
 
+// ─── Company Contacts (Phase 5.2, Stage 5.2.1) ───────────────────────────
+// A company can retain multiple persistent business contacts across every
+// inquiry, project, contract, document, and deal match it is ever linked to.
+// Deactivation is soft (status = 'inactive') — contacts are never permanently
+// deleted, preserving history on anything that referenced them.
+
+export type CompanyContactRecord = {
+  id: string;
+  company_id: string;
+  first_name: string;
+  last_name: string | null;
+  job_title: string | null;
+  department: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  country: string | null;
+  preferred_contact_method: string | null;
+  is_primary: boolean;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const COMPANY_CONTACT_SELECT =
+  "id,company_id,first_name,last_name,job_title,department,email,phone,mobile,country,preferred_contact_method,is_primary,status,notes,created_at,updated_at";
+
+const VALID_CONTACT_STATUSES = new Set(["active", "inactive"]);
+const VALID_PREFERRED_CONTACT_METHODS = new Set(["email", "phone", "mobile"]);
+
+export function assertValidContactStatus(status: string): void {
+  if (!VALID_CONTACT_STATUSES.has(status)) {
+    throw new Error("Status must be 'active' or 'inactive'.");
+  }
+}
+
+export function assertValidPreferredContactMethod(method: string): void {
+  if (!VALID_PREFERRED_CONTACT_METHODS.has(method)) {
+    throw new Error("Preferred contact method must be 'email', 'phone', or 'mobile'.");
+  }
+}
+
+// Ordering used by the company detail page: primary contact first, then
+// active before inactive, then alphabetically by name.
+const sortCompanyContacts = (contacts: CompanyContactRecord[]): CompanyContactRecord[] =>
+  [...contacts].sort((a, b) => {
+    if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
+    if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+    const aName = `${a.first_name} ${a.last_name ?? ""}`.trim().toLowerCase();
+    const bName = `${b.first_name} ${b.last_name ?? ""}`.trim().toLowerCase();
+    return aName.localeCompare(bName);
+  });
+
+export async function getCompanyContactsServer(companyId: string): Promise<CompanyContactRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("company_contacts")
+    .select(COMPANY_CONTACT_SELECT)
+    .eq("company_id", companyId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return sortCompanyContacts((data ?? []) as CompanyContactRecord[]);
+}
+
+export async function getAllCompanyContactsServer(): Promise<CompanyContactRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("company_contacts")
+    .select(COMPANY_CONTACT_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as CompanyContactRecord[];
+}
+
+export async function getCompanyContactServer(contactId: string): Promise<CompanyContactRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("company_contacts")
+    .select(COMPANY_CONTACT_SELECT)
+    .eq("id", contactId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as CompanyContactRecord | null) ?? null;
+}
+
+// Unsets the current active primary contact for a company, if any. Callers
+// perform this before inserting/updating a row with is_primary = true so at
+// most one active primary contact ever exists per company.
+async function clearActivePrimaryContact(companyId: string, exceptContactId?: string): Promise<void> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  let query = supabaseServer
+    .from("company_contacts")
+    .update({ is_primary: false })
+    .eq("company_id", companyId)
+    .eq("is_primary", true);
+
+  if (exceptContactId) {
+    query = query.neq("id", exceptContactId);
+  }
+
+  const { error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function createCompanyContactServer(
+  companyId: string,
+  input: {
+    first_name: string;
+    last_name?: string | null;
+    job_title?: string | null;
+    department?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    mobile?: string | null;
+    country?: string | null;
+    preferred_contact_method?: string | null;
+    is_primary?: boolean;
+    status?: string | null;
+    notes?: string | null;
+  },
+): Promise<CompanyContactRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const first_name = input.first_name.trim();
+  if (!first_name) {
+    throw new Error("First name is required.");
+  }
+
+  const status = input.status?.trim() || "active";
+  assertValidContactStatus(status);
+
+  const preferred_contact_method = input.preferred_contact_method?.trim() || null;
+  if (preferred_contact_method) {
+    assertValidPreferredContactMethod(preferred_contact_method);
+  }
+
+  const company = await getCompanyByIdServer(companyId);
+  if (!company) {
+    throw new Error("Company not found.");
+  }
+
+  const isPrimary = Boolean(input.is_primary) && status === "active";
+
+  if (isPrimary) {
+    await clearActivePrimaryContact(companyId);
+  }
+
+  const { data, error } = await supabaseServer
+    .from("company_contacts")
+    .insert({
+      company_id: companyId,
+      first_name,
+      last_name: input.last_name?.trim() || null,
+      job_title: input.job_title?.trim() || null,
+      department: input.department?.trim() || null,
+      email: input.email?.trim().toLowerCase() || null,
+      phone: input.phone?.trim() || null,
+      mobile: input.mobile?.trim() || null,
+      country: input.country?.trim() || null,
+      preferred_contact_method,
+      is_primary: isPrimary,
+      status,
+      notes: input.notes?.trim() || null,
+    })
+    .select(COMPANY_CONTACT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as CompanyContactRecord;
+}
+
+export async function updateCompanyContactServer(
+  contactId: string,
+  updates: {
+    company_id?: string;
+    first_name?: string;
+    last_name?: string | null;
+    job_title?: string | null;
+    department?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    mobile?: string | null;
+    country?: string | null;
+    preferred_contact_method?: string | null;
+    is_primary?: boolean;
+    status?: string;
+    notes?: string | null;
+  },
+): Promise<CompanyContactRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const existing = await getCompanyContactServer(contactId);
+  if (!existing) {
+    throw new Error("Contact not found.");
+  }
+
+  if (updates.company_id !== undefined && updates.company_id !== existing.company_id) {
+    throw new Error("A contact cannot be reassigned to a different company.");
+  }
+
+  const updatePayload: Record<string, string | boolean | null> = {};
+
+  if (updates.first_name !== undefined) {
+    const first_name = updates.first_name.trim();
+    if (!first_name) {
+      throw new Error("First name is required.");
+    }
+    updatePayload.first_name = first_name;
+  }
+
+  if (updates.last_name !== undefined) updatePayload.last_name = updates.last_name?.trim() || null;
+  if (updates.job_title !== undefined) updatePayload.job_title = updates.job_title?.trim() || null;
+  if (updates.department !== undefined) updatePayload.department = updates.department?.trim() || null;
+  if (updates.email !== undefined) updatePayload.email = updates.email?.trim().toLowerCase() || null;
+  if (updates.phone !== undefined) updatePayload.phone = updates.phone?.trim() || null;
+  if (updates.mobile !== undefined) updatePayload.mobile = updates.mobile?.trim() || null;
+  if (updates.country !== undefined) updatePayload.country = updates.country?.trim() || null;
+  if (updates.notes !== undefined) updatePayload.notes = updates.notes?.trim() || null;
+
+  if (updates.preferred_contact_method !== undefined) {
+    const method = updates.preferred_contact_method?.trim() || null;
+    if (method) assertValidPreferredContactMethod(method);
+    updatePayload.preferred_contact_method = method;
+  }
+
+  const nextStatus = updates.status !== undefined ? updates.status : existing.status;
+  if (updates.status !== undefined) {
+    assertValidContactStatus(updates.status);
+    updatePayload.status = updates.status;
+  }
+
+  const nextIsPrimary = updates.is_primary !== undefined ? updates.is_primary : existing.is_primary;
+
+  // Deactivating a contact always clears its primary flag — an inactive
+  // contact can never remain the designated primary.
+  const willBePrimary = nextStatus === "active" && Boolean(nextIsPrimary);
+
+  if (willBePrimary) {
+    await clearActivePrimaryContact(existing.company_id, contactId);
+    updatePayload.is_primary = true;
+  } else if (updates.is_primary !== undefined || updates.status !== undefined) {
+    updatePayload.is_primary = false;
+  }
+
+  const { data, error } = await supabaseServer
+    .from("company_contacts")
+    .update(updatePayload)
+    .eq("id", contactId)
+    .select(COMPANY_CONTACT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as CompanyContactRecord;
+}
+
+export async function deactivateCompanyContactServer(contactId: string): Promise<CompanyContactRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("company_contacts")
+    .update({ status: "inactive", is_primary: false })
+    .eq("id", contactId)
+    .select(COMPANY_CONTACT_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as CompanyContactRecord;
+}
+
 export type ProjectRecord = {
   id: string;
   name: string;
@@ -565,6 +875,28 @@ export async function getProjectByIdServer(id: string): Promise<ProjectRecord | 
   }
 
   return (data as unknown as ProjectRecord | null) ?? null;
+}
+
+// Company-scoped fetch (Phase 5.3, Stage 5.3.1A) — reuses PROJECT_SELECT so
+// callers get the same shape as getProjectsServer(), just pre-filtered at
+// the database level instead of fetching every project and filtering in
+// memory (the pattern app/admin/companies/[id]/page.tsx currently uses).
+export async function getProjectsForCompanyServer(companyId: string): Promise<ProjectRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("projects")
+    .select(PROJECT_SELECT)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as ProjectRecord[];
 }
 
 export async function createProjectServer(input: {
@@ -706,6 +1038,26 @@ export async function getContractByIdServer(id: string): Promise<ContractRecord 
   }
 
   return (data as unknown as ContractRecord | null) ?? null;
+}
+
+// Company-scoped fetch (Phase 5.3, Stage 5.3.1A) — same rationale as
+// getProjectsForCompanyServer above.
+export async function getContractsForCompanyServer(companyId: string): Promise<ContractRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("contracts")
+    .select(CONTRACT_SELECT)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as ContractRecord[];
 }
 
 export async function createContractServer(input: {
@@ -1390,6 +1742,459 @@ export async function deleteReminderServer(id: string): Promise<void> {
   }
 }
 
+// ─── Client Support Center (Phase 5.2, Stage 5.2.2.1) ───────────────────
+// Support requests raised by clients/brokers against a company, optionally
+// attributed to a specific company contact, tracked through to resolution.
+
+export type SupportRequestRecord = {
+  id: string;
+  company_id: string;
+  contact_id: string | null;
+  category: string;
+  priority: string;
+  subject: string;
+  message: string;
+  status: string;
+  assigned_to: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  companies: { name: string } | null;
+  company_contacts: { first_name: string; last_name: string | null } | null;
+  admin_users: { name: string } | null;
+};
+
+const SUPPORT_REQUEST_SELECT =
+  "id,company_id,contact_id,category,priority,subject,message,status,assigned_to,created_at,updated_at,resolved_at,companies(name),company_contacts(first_name,last_name),admin_users(name)";
+
+const VALID_SUPPORT_CATEGORIES = new Set([
+  "technical_problem",
+  "brokerage_inquiry",
+  "account_question",
+  "suggestion",
+  "general_feedback",
+  "report_bug",
+]);
+
+const VALID_SUPPORT_PRIORITIES = new Set(["normal", "high", "urgent"]);
+
+const VALID_SUPPORT_STATUSES = new Set(["new", "open", "in_progress", "waiting_for_client", "resolved", "closed"]);
+
+const RESOLVED_SUPPORT_STATUSES = new Set(["resolved", "closed"]);
+
+export function assertValidSupportCategory(category: string): void {
+  if (!VALID_SUPPORT_CATEGORIES.has(category)) {
+    throw new Error("Invalid support request category.");
+  }
+}
+
+export function assertValidSupportPriority(priority: string): void {
+  if (!VALID_SUPPORT_PRIORITIES.has(priority)) {
+    throw new Error("Priority must be 'normal', 'high', or 'urgent'.");
+  }
+}
+
+export function assertValidSupportStatus(status: string): void {
+  if (!VALID_SUPPORT_STATUSES.has(status)) {
+    throw new Error("Invalid support request status.");
+  }
+}
+
+export async function getSupportRequestsServer(): Promise<SupportRequestRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_requests")
+    .select(SUPPORT_REQUEST_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as SupportRequestRecord[];
+}
+
+export async function getSupportRequestsForCompanyServer(companyId: string): Promise<SupportRequestRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_requests")
+    .select(SUPPORT_REQUEST_SELECT)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as SupportRequestRecord[];
+}
+
+export async function getSupportRequestServer(id: string): Promise<SupportRequestRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_requests")
+    .select(SUPPORT_REQUEST_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as unknown as SupportRequestRecord | null) ?? null;
+}
+
+export async function createSupportRequestServer(input: {
+  company_id: string;
+  contact_id?: string | null;
+  category: string;
+  priority?: string | null;
+  subject: string;
+  message: string;
+}): Promise<SupportRequestRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const subject = input.subject.trim();
+  if (!subject) {
+    throw new Error("Subject is required.");
+  }
+
+  const message = input.message.trim();
+  if (!message) {
+    throw new Error("Message is required.");
+  }
+
+  assertValidSupportCategory(input.category);
+
+  const priority = input.priority?.trim() || "normal";
+  assertValidSupportPriority(priority);
+
+  const company = await getCompanyByIdServer(input.company_id);
+  if (!company) {
+    throw new Error("Company not found.");
+  }
+
+  if (input.contact_id) {
+    const contact = await getCompanyContactServer(input.contact_id);
+    if (!contact || contact.company_id !== input.company_id) {
+      throw new Error("Contact does not belong to this company.");
+    }
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_requests")
+    .insert({
+      company_id: input.company_id,
+      contact_id: input.contact_id || null,
+      category: input.category,
+      priority,
+      subject,
+      message,
+    })
+    .select(SUPPORT_REQUEST_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as SupportRequestRecord;
+}
+
+export async function updateSupportRequestServer(
+  id: string,
+  updates: {
+    category?: string;
+    priority?: string;
+    status?: string;
+    assigned_to?: string | null;
+  },
+): Promise<SupportRequestRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const existing = await getSupportRequestServer(id);
+  if (!existing) {
+    throw new Error("Support request not found.");
+  }
+
+  const updatePayload: Record<string, string | null> = {};
+
+  if (updates.category !== undefined) {
+    assertValidSupportCategory(updates.category);
+    updatePayload.category = updates.category;
+  }
+
+  if (updates.priority !== undefined) {
+    assertValidSupportPriority(updates.priority);
+    updatePayload.priority = updates.priority;
+  }
+
+  if (updates.assigned_to !== undefined) {
+    updatePayload.assigned_to = updates.assigned_to || null;
+  }
+
+  if (updates.status !== undefined) {
+    assertValidSupportStatus(updates.status);
+    updatePayload.status = updates.status;
+
+    // Stamp resolved_at the first time a request reaches a resolved state;
+    // clear it if the request is reopened into any non-resolved status.
+    if (RESOLVED_SUPPORT_STATUSES.has(updates.status)) {
+      updatePayload.resolved_at = existing.resolved_at ?? new Date().toISOString();
+    } else {
+      updatePayload.resolved_at = null;
+    }
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_requests")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(SUPPORT_REQUEST_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as SupportRequestRecord;
+}
+
+// ─── Support Notifications (Phase 5.2, Stage 5.2.3) ──────────────────────
+// A delivery-attempt log for support-request transactional emails. Rows are
+// written synchronously around each provider call — this is an audit trail,
+// not a message queue. See lib/support-notification-helpers.ts for the
+// orchestration (recipient selection, idempotency, dispatch) that writes to
+// this table; the functions below are plain data-access, matching every
+// other *Server helper in this file.
+
+export type SupportNotificationRecord = {
+  id: string;
+  support_request_id: string;
+  company_id: string;
+  contact_id: string | null;
+  notification_type: string;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  provider: string | null;
+  provider_message_id: string | null;
+  delivery_status: string;
+  error_message: string | null;
+  metadata: Record<string, unknown>;
+  idempotency_key: string;
+  attempted_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const SUPPORT_NOTIFICATION_SELECT =
+  "id,support_request_id,company_id,contact_id,notification_type,recipient_email,recipient_name,subject,provider,provider_message_id,delivery_status,error_message,metadata,idempotency_key,attempted_at,sent_at,created_at,updated_at";
+
+export async function getSupportNotificationsForRequestServer(
+  supportRequestId: string,
+): Promise<SupportNotificationRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .eq("support_request_id", supportRequestId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as SupportNotificationRecord[];
+}
+
+export async function getSupportNotificationsForCompanyServer(companyId: string): Promise<SupportNotificationRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as SupportNotificationRecord[];
+}
+
+export async function getAllSupportNotificationsServer(): Promise<SupportNotificationRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as unknown as SupportNotificationRecord[];
+}
+
+export async function getSupportNotificationServer(id: string): Promise<SupportNotificationRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as unknown as SupportNotificationRecord | null) ?? null;
+}
+
+export async function getSupportNotificationByIdempotencyKeyServer(
+  idempotencyKey: string,
+): Promise<SupportNotificationRecord | null> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as unknown as SupportNotificationRecord | null) ?? null;
+}
+
+// Idempotent insert: returns the existing row for this idempotency_key if
+// one already exists (the normal path for a duplicate submission/retry),
+// otherwise inserts a new 'pending' row. A unique-violation race (two
+// concurrent requests for the same event) is handled by re-selecting rather
+// than erroring — see support_notifications_idempotency_key_idx in
+// migration 015.
+export async function getOrCreatePendingSupportNotificationServer(input: {
+  support_request_id: string;
+  company_id: string;
+  contact_id?: string | null;
+  notification_type: string;
+  recipient_email: string;
+  recipient_name?: string | null;
+  subject: string;
+  idempotency_key: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ record: SupportNotificationRecord; created: boolean }> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const existing = await getSupportNotificationByIdempotencyKeyServer(input.idempotency_key);
+  if (existing) {
+    return { record: existing, created: false };
+  }
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .insert({
+      support_request_id: input.support_request_id,
+      company_id: input.company_id,
+      contact_id: input.contact_id || null,
+      notification_type: input.notification_type,
+      recipient_email: input.recipient_email,
+      recipient_name: input.recipient_name?.trim() || null,
+      subject: input.subject,
+      delivery_status: "pending",
+      metadata: input.metadata ?? {},
+      idempotency_key: input.idempotency_key,
+      attempted_at: new Date().toISOString(),
+    })
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .single();
+
+  if (error) {
+    // 23505 = unique_violation — a concurrent request already inserted this
+    // exact idempotency_key between our check and our insert. Treat that
+    // race the same as finding it up front: return the winner's row.
+    if (error.code === "23505") {
+      const winner = await getSupportNotificationByIdempotencyKeyServer(input.idempotency_key);
+      if (winner) {
+        return { record: winner, created: false };
+      }
+    }
+    throw new Error(error.message);
+  }
+
+  return { record: data as unknown as SupportNotificationRecord, created: true };
+}
+
+export async function updateSupportNotificationDeliveryServer(
+  id: string,
+  updates: {
+    delivery_status: string;
+    provider?: string | null;
+    provider_message_id?: string | null;
+    error_message?: string | null;
+    sent_at?: string | null;
+  },
+): Promise<SupportNotificationRecord> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const updatePayload: Record<string, string | null> = {
+    delivery_status: updates.delivery_status,
+  };
+
+  if (updates.provider !== undefined) updatePayload.provider = updates.provider;
+  if (updates.provider_message_id !== undefined) updatePayload.provider_message_id = updates.provider_message_id;
+  if (updates.error_message !== undefined) updatePayload.error_message = updates.error_message;
+  if (updates.sent_at !== undefined) updatePayload.sent_at = updates.sent_at;
+
+  const { data, error } = await supabaseServer
+    .from("support_notifications")
+    .update(updatePayload)
+    .eq("id", id)
+    .select(SUPPORT_NOTIFICATION_SELECT)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as unknown as SupportNotificationRecord;
+}
+
 // ─── Deal Matching (Phase 5.1) ───────────────────────────────────────────
 // Decision-support only — every row here is a suggestion for human review.
 // Nothing in this file writes to public.inquiries, sends communication, or
@@ -1473,6 +2278,33 @@ export async function getDealMatchByIdServer(id: string): Promise<DealMatchRecor
   }
 
   return (data ?? null) as DealMatchRecord | null;
+}
+
+// Company-scoped fetch (Phase 5.3, Stage 5.3.1A) — a company can appear as
+// either the buyer or the seller side of a match, so this checks both
+// columns. companyId is validated as a UUID before being interpolated into
+// the raw .or() filter string below, same safeguard getDealMatchesServer()
+// already applies to inquiryId.
+export async function getDealMatchesForCompanyServer(companyId: string): Promise<DealMatchRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(companyId)) {
+    return [];
+  }
+
+  const { data, error } = await supabaseServer
+    .from("deal_matches")
+    .select(DEAL_MATCH_SELECT)
+    .or(`buyer_company_id.eq.${companyId},seller_company_id.eq.${companyId}`)
+    .order("opportunity_score", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as DealMatchRecord[];
 }
 
 // Insert-or-refresh a computed match. Uses the (buyer_inquiry_id,

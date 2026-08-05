@@ -93,6 +93,68 @@ Audited against source code (`grep -r "process.env"` across `app/`, `lib/`,
   in `proxy.ts`.
 - **Example placeholder**: `change-me-to-a-strong-password`
 
+## Transactional email (Stage 5.2.3 — Support Center notifications)
+
+### `RESEND_API_KEY`
+- **Purpose**: Authenticates server-side calls to Resend for support-request
+  transactional emails (acknowledgment, internal alert, status-change
+  notices). Used only in `lib/transactional-email.ts`.
+- **Required**: No — the app **fails safe** when absent. Support requests
+  still create/update normally; every notification attempt is recorded in
+  `support_notifications` with `delivery_status = 'skipped'` and an
+  explanatory (non-sensitive) `error_message`.
+- **Exposure**: **Server-only.** Read only inside `lib/transactional-email.ts`,
+  never imported by a `"use client"` component.
+- **Environments**: Local (optional), Preview, Production.
+- **Configured in**: `.env.local` (local); Vercel (Preview, Production).
+- **Example placeholder**: *(left blank in `.env.example` — no fake key
+  shape provided, to avoid implying a real key format)*.
+- **Consequence if missing**: Every support-request email is skipped
+  (recorded, not silently dropped) — the support request itself is
+  unaffected.
+- **Rotation**: Rotate immediately if ever suspected exposed; this key can
+  send email as the configured `EMAIL_FROM_ADDRESS`.
+
+### `EMAIL_FROM_NAME`
+- **Purpose**: Display name for the `From` header on support-request emails.
+- **Required**: No — defaults to `Amber Global Energy` in code if unset.
+- **Exposure**: Appears in outbound email headers only, not the browser.
+- **Example placeholder**: `Amber Global Energy`
+
+### `EMAIL_FROM_ADDRESS`
+- **Purpose**: The verified sending address for support-request emails.
+- **Required**: Effectively yes once `RESEND_API_KEY` is set — Resend will
+  reject sends from an unverified address.
+- **Exposure**: **Server-only**, appears in outbound email headers only.
+- **Consequence if missing**: Send attempts fail; recorded as `failed` in
+  `support_notifications` with the request still unaffected.
+
+### `SUPPORT_EMAIL`
+- **Purpose**: The public support inbox shown to clients — both in the
+  existing "Need Assistance?" card (`app/admin/_components/support-request-card.tsx`,
+  already hardcoded there since Stage 5.2.2.1) and now also in the body of
+  every automated support email.
+- **Required**: No — code falls back to `support@amberglobalenergy.in` if
+  unset, matching the existing hardcoded UI value.
+- **Exposure**: Appears in email bodies shown to clients — not a secret.
+
+### `SUPPORT_NOTIFICATION_EMAIL`
+- **Purpose**: Fallback recipient for the internal "new support request"
+  alert when no broker is assigned yet, or the assigned broker's
+  `admin_users.email` is empty.
+- **Required**: No, but the internal alert is skipped (and recorded as such)
+  if both this and a broker email are unavailable.
+- **Exposure**: **Server-only** — never sent to the browser.
+
+### `NEXT_PUBLIC_SITE_URL` (reused, not duplicated)
+- This variable already existed (see below) and was previously unused. Stage
+  5.2.3 is its first live consumer: `lib/transactional-email.ts` uses it to
+  build the direct admin link (`{NEXT_PUBLIC_SITE_URL}/admin/companies/{id}`)
+  included in internal alert emails. When unset, the link is omitted from
+  the email body rather than emitting a broken/relative URL. No new
+  site-URL variable was introduced — see the "Configured but currently
+  unused" section below for its original entry, now superseded by this note.
+
 ## Configured but currently unused
 
 These three exist in both `.env.local` and Vercel but are **not referenced
@@ -121,21 +183,16 @@ flagged here purely so they aren't mistaken for load-bearing.
 - **Consequence if missing**: None currently.
 - **Rotation**: Not applicable.
 
-### `NEXT_PUBLIC_SITE_URL`
-- **Purpose (intended)**: Canonical site URL, presumably for SEO/OG tags.
-- **Required**: No — inert.
-- **Exposure**: Would be browser-exposed by design if wired in.
-- **Environments**: Production, Preview (present in Vercel; not read by any
-  code).
-- **Example placeholder**: `https://amber-global-energy.vercel.app`
-- **Consequence if missing**: None currently.
-- **Rotation**: Not applicable.
+`NEXT_PUBLIC_SITE_URL` was previously listed here as inert — as of Stage
+5.2.3 it has a live consumer; see "Transactional email" above for its entry.
 
 ## Verification performed
 
-- Full-repo `process.env.*` scan (`app/`, `lib/`, `proxy.ts`) — 5 distinct
-  variables actively read; cross-referenced against 8 variables present in
-  `.env.local` and Vercel.
+- Full-repo `process.env.*` scan (`app/`, `lib/`, `proxy.ts`) — originally 5
+  distinct variables actively read (as of 2026-07-16); Stage 5.2.3 added 5
+  more (`RESEND_API_KEY`, `EMAIL_FROM_NAME`, `EMAIL_FROM_ADDRESS`,
+  `SUPPORT_EMAIL`, `SUPPORT_NOTIFICATION_EMAIL`) and activated one
+  previously-inert variable (`NEXT_PUBLIC_SITE_URL`).
 - Traced every importer of `lib/supabase-server.ts` (the service-role
   module) and confirmed every client-component import is type-only.
 - Confirmed `proxy.ts`'s fail-closed behavior when admin credentials are

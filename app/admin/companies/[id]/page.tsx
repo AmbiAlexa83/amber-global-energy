@@ -1,10 +1,27 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCompanyByIdServer, getInquiriesServer, getProjectsServer, getContractsServer } from "@/lib/supabase-server";
+import {
+  getCompanyByIdServer,
+  getInquiriesServer,
+  getProjectsServer,
+  getContractsServer,
+  getCompanyContactsServer,
+  getSupportRequestsForCompanyServer,
+  getRemindersForEntityServer,
+  getDocumentsForEntityServer,
+  getEmailsForEntityServer,
+  getDealMatchesForCompanyServer,
+} from "@/lib/supabase-server";
 import { formatValue, formatDate, formatStatusLabel, normalizePriorityValue } from "@/lib/inquiry-helpers";
 import { formatProjectStageLabel, projectStageStyles } from "@/lib/project-helpers";
 import { formatContractStatusLabel, contractStatusStyles } from "@/lib/contract-helpers";
+import { computeCompanyHealth } from "@/lib/company-intelligence";
+import { buildActivityFeed } from "@/lib/activity-helpers";
 import CompanyForm from "./company-form";
+import CompanyHealthCard from "../../_components/company-health-card";
+import CompanyTimeline from "../../_components/company-timeline";
+import CompanyContacts from "../../_components/company-contacts";
+import SupportRequestCard from "../../_components/support-request-card";
 import DocumentUploader from "../../_components/document-uploader";
 import EmailTimeline from "../../_components/email-timeline";
 import ReminderList from "../../_components/reminder-list";
@@ -17,16 +34,61 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
     notFound();
   }
 
-  const [inquiries, projects, contracts] = await Promise.all([
+  const [inquiries, projects, contracts, contacts, supportRequests, reminders, documents, emails, dealMatches] = await Promise.all([
     getInquiriesServer().catch(() => []),
     getProjectsServer().catch(() => []),
     getContractsServer().catch(() => []),
+    getCompanyContactsServer(id).catch(() => []),
+    getSupportRequestsForCompanyServer(id).catch(() => []),
+    getRemindersForEntityServer({ company_id: id }).catch(() => []),
+    getDocumentsForEntityServer({ company_id: id }).catch(() => []),
+    getEmailsForEntityServer({ company_id: id }).catch(() => []),
+    getDealMatchesForCompanyServer(id).catch(() => []),
   ]);
   const relatedInquiries = inquiries.filter(
     (inquiry) => (inquiry.company_name ?? "").trim().toLowerCase() === company.name.trim().toLowerCase(),
   );
   const relatedProjects = projects.filter((project) => project.company_id === id);
   const relatedContracts = contracts.filter((contract) => contract.company_id === id);
+
+  // Reuses the already-fetched/filtered arrays above — no duplicate queries
+  // or recomputation of business rules. computeCompanyHealth is the
+  // deterministic engine built in Stage 5.3.1A; this page only assembles
+  // its input and renders the result via CompanyHealthCard.
+  const health = computeCompanyHealth({
+    company,
+    contacts,
+    inquiries: relatedInquiries,
+    projects: relatedProjects,
+    contracts: relatedContracts,
+    supportRequests,
+    reminders,
+    documents,
+    emails,
+    dealMatches,
+  });
+
+  // Reuses buildActivityFeed() exactly as-is (lib/activity-helpers.ts,
+  // unmodified) — filtering by company is achieved by feeding it
+  // company-scoped arrays (the same ones already fetched above for the
+  // health card) instead of the desk-wide arrays app/admin/activity/page.tsx
+  // passes. No new queries, no second activity engine. brokers/adminUsers
+  // are intentionally passed as [] — those event types (broker roster,
+  // team roster) aren't associated with any single company. inquiryHistory
+  // is also passed as [] — see the Stage 5.3.1C completion report for why.
+  const timelineEvents = buildActivityFeed({
+    inquiries: relatedInquiries,
+    inquiryHistory: [],
+    brokers: [],
+    companies: [company],
+    companyContacts: contacts,
+    supportRequests,
+    projects: relatedProjects,
+    contracts: relatedContracts,
+    documents,
+    emails,
+    adminUsers: [],
+  });
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(200,162,77,0.13),_transparent_28%),linear-gradient(135deg,_#03070D_0%,_#071A2D_65%,_#02060D_100%)] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
@@ -47,7 +109,15 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
         </header>
 
         <div className="space-y-4">
+          <CompanyHealthCard health={health} />
+
+          <CompanyTimeline events={timelineEvents} />
+
           <CompanyForm company={company} />
+
+          <CompanyContacts companyId={company.id} />
+
+          <SupportRequestCard companyId={company.id} />
 
           <DocumentUploader entityType="company" entityId={company.id} />
 

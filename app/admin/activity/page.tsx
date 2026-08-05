@@ -4,6 +4,8 @@ import {
   getRecentInquiryHistoryServer,
   getBrokersServer,
   getCompaniesServer,
+  getAllCompanyContactsServer,
+  getSupportRequestsServer,
   getProjectsServer,
   getContractsServer,
   getRecentDocumentsServer,
@@ -21,11 +23,25 @@ export const dynamic = "force-dynamic";
 const FEED_LIMIT = 60;
 
 export default async function ActivityPage() {
-  const [inquiries, inquiryHistory, brokers, companies, projects, contracts, documents, emails, adminUsers] = await Promise.all([
+  const [
+    inquiries,
+    inquiryHistory,
+    brokers,
+    companies,
+    companyContacts,
+    supportRequests,
+    projects,
+    contracts,
+    documents,
+    emails,
+    adminUsers,
+  ] = await Promise.all([
     getInquiriesServer(),
     getRecentInquiryHistoryServer().catch(() => []),
     getBrokersServer().catch(() => []),
     getCompaniesServer().catch(() => []),
+    getAllCompanyContactsServer().catch(() => []),
+    getSupportRequestsServer().catch(() => []),
     getProjectsServer().catch(() => []),
     getContractsServer().catch(() => []),
     getRecentDocumentsServer().catch(() => []),
@@ -33,17 +49,28 @@ export default async function ActivityPage() {
     getAdminUsersServer().catch(() => []),
   ]);
 
-  const allEvents = buildActivityFeed({
-    inquiries,
-    inquiryHistory,
-    brokers,
-    companies,
-    projects,
-    contracts,
-    documents,
-    emails,
-    adminUsers,
-  });
+  // buildActivityFeed is synchronous and derives events from data that's
+  // already been individually try/caught above — this guards the page
+  // itself against ever 500ing if one event source's shape surprises the
+  // feed builder, instead of taking the whole timeline down with it.
+  let allEvents: ReturnType<typeof buildActivityFeed> = [];
+  try {
+    allEvents = buildActivityFeed({
+      inquiries,
+      inquiryHistory,
+      brokers,
+      companies,
+      companyContacts,
+      supportRequests,
+      projects,
+      contracts,
+      documents,
+      emails,
+      adminUsers,
+    });
+  } catch {
+    allEvents = [];
+  }
 
   const events = allEvents.slice(0, FEED_LIMIT);
 
