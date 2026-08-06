@@ -12,7 +12,10 @@ export default function ExecutiveAlertsPanel({ alerts }: { alerts: ExecutiveAler
   return (
     <section className="rounded-[28px] border border-white/10 bg-[#050B16]/90 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur sm:p-6">
       <h2 className="text-xl font-semibold text-white">Executive Alerts ({alerts.length})</h2>
-      <p className="mt-1 text-sm text-slate-400">Rule-based alerts generated from live CRM data, ranked by severity.</p>
+      <p className="mt-1 text-sm text-slate-400">
+        Rule-based alerts generated from live CRM data, ranked by severity. Covers both pipeline execution and company
+        relationship health — the complete view of executive risk.
+      </p>
 
       {alerts.length === 0 ? (
         <p className="mt-4 text-sm text-slate-500">No alerts — nothing requires executive attention right now.</p>

@@ -15,6 +15,9 @@ import {
 import { normalizeProjectStage, CLOSED_PROJECT_STAGES } from "@/lib/project-helpers";
 import { isContractExpiringSoon } from "@/lib/contract-helpers";
 import type { ProjectRecord, ContractRecord } from "@/lib/supabase-server";
+// Type-only, so no runtime dependency is created in either direction —
+// lib/company-intelligence.ts already type-imports AlertSeverity from here.
+import type { CompanyHealthFlag } from "@/lib/company-intelligence";
 
 export type AlertSeverity = "critical" | "high" | "medium" | "low";
 
@@ -23,12 +26,35 @@ export type ExecutiveAlert = {
   severity: AlertSeverity;
   type: string;
   reason: string;
-  entityType: "inquiry" | "project" | "contract";
+  // Company-relationship entities were added when company health joined this
+  // stream; CompanyHealthFlag.entityType is the source of those four members.
+  entityType: "inquiry" | "project" | "contract" | "company" | "contact" | "support_request" | "reminder";
   entityId: string;
   entityLabel: string;
   recommendedAction: string;
   href: string;
 };
+
+// The single classifier for "is this alert about pipeline execution, or about
+// a company relationship?" Consumers that must not mix the two (the executive
+// summary's pipeline verdict) call isPipelineExecutionAlert() rather than
+// re-deriving the distinction from ids or types.
+//
+// entityType is the discriminator because it already is one: every deal rule
+// in this module emits inquiry/project/contract, and CompanyHealthFlag only
+// ever emits the four below. Any future company-relationship rule must keep
+// to this set for the split to hold.
+const COMPANY_RELATIONSHIP_ENTITY_TYPES = new Set<ExecutiveAlert["entityType"]>([
+  "company",
+  "contact",
+  "support_request",
+  "reminder",
+]);
+
+export const isCompanyRelationshipAlert = (alert: ExecutiveAlert): boolean =>
+  COMPANY_RELATIONSHIP_ENTITY_TYPES.has(alert.entityType);
+
+export const isPipelineExecutionAlert = (alert: ExecutiveAlert): boolean => !isCompanyRelationshipAlert(alert);
 
 // Minimal shape needed for the stalled-deal alert — deliberately not imported
 // from lib/executive-analytics.ts (which imports this module) to avoid a
@@ -63,6 +89,13 @@ export const generateExecutiveAlerts = (input: {
   projects: ProjectRecord[];
   contracts: ContractRecord[];
   stalledDeals: StalledDealInput[];
+  // Already-evaluated company health flags, from
+  // computeCompanyPortfolioHealth() + flattenPortfolioHealthFlags(). This
+  // module deliberately does not evaluate company rules itself: they belong to
+  // lib/company-intelligence.ts, and duplicating them here would let the
+  // executive dashboard and the company profile disagree. Optional, so
+  // existing callers that only want deal alerts are unaffected.
+  companyHealthFlags?: CompanyHealthFlag[];
   now?: Date;
 }): ExecutiveAlert[] => {
   const nowMs = (input.now ?? new Date()).getTime();
@@ -228,6 +261,26 @@ export const generateExecutiveAlerts = (input: {
       entityLabel: stalled.name,
       recommendedAction: "Re-engage the customer or update the project status.",
       href: stalled.href,
+    });
+  }
+
+  // 9. Company relationship health
+  // A projection, not a rule: CompanyHealthFlag was authored to carry exactly
+  // the fields ExecutiveAlert needs (severity, reason, recommendedAction,
+  // entity context, href), so each flag maps across field-for-field. `level`
+  // is dropped — it drives the company-profile badge, not alert ranking — and
+  // ids are namespaced against the deal-alert ids above.
+  for (const flag of input.companyHealthFlags ?? []) {
+    alerts.push({
+      id: `company_health-${flag.id}`,
+      severity: flag.severity,
+      type: flag.type,
+      reason: flag.reason,
+      entityType: flag.entityType,
+      entityId: flag.entityId,
+      entityLabel: flag.entityLabel,
+      recommendedAction: flag.recommendedAction,
+      href: flag.href,
     });
   }
 

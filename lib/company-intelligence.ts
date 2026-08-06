@@ -536,3 +536,25 @@ export function computeCompanyPortfolioHealth(
 
   return reports;
 }
+
+// Flattens a portfolio report into one desk-wide list of flags.
+//
+// CompanyHealthFlag ids (e.g. "no_primary_contact") are only unique *within*
+// one company's report, which is all CompanyHealthCard needs. Pooled across
+// the desk they collide — two companies missing a primary contact would emit
+// the same id — so each flag is re-keyed with its company id here. Callers
+// merging these into a shared, keyed list must use this rather than
+// concatenating reports themselves.
+//
+// Ordering follows input.companies, and flags keep the order
+// evaluateHealthFlags() emitted them in; consumers that care about severity
+// are expected to sort, exactly as generateExecutiveAlerts() already does.
+export function flattenPortfolioHealthFlags(reports: Record<string, CompanyHealthReport>): CompanyHealthFlag[] {
+  const flags: CompanyHealthFlag[] = [];
+  for (const [companyId, report] of Object.entries(reports)) {
+    for (const flag of report.flags) {
+      flags.push({ ...flag, id: `${companyId}-${flag.id}` });
+    }
+  }
+  return flags;
+}

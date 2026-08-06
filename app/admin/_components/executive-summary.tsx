@@ -21,11 +21,14 @@ export default function ExecutiveSummary({ summary }: { summary: ExecutiveSummar
           {summary.pipelineHealth.status.replace("_", " ")}
         </span>
       </div>
+      <p className="mt-1 text-sm text-slate-400">
+        Reflects pipeline execution only. Company relationship health is excluded here and reported in Executive Alerts.
+      </p>
       <p className="mt-2 text-sm text-slate-300">{summary.pipelineHealth.note}</p>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-rose-300">Highest-Priority Risks</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-rose-300">Highest-Priority Pipeline Risks</p>
           {summary.topRisks.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">No high-severity risks right now.</p>
           ) : (

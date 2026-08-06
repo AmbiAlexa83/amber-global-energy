@@ -16,7 +16,8 @@ import {
 import { normalizeProjectStage, CLOSED_PROJECT_STAGES, projectStageOptions } from "@/lib/project-helpers";
 import { CLOSED_CONTRACT_STATUSES } from "@/lib/contract-helpers";
 import { computeRevenueForecast, getStageProbability, type RevenueForecast } from "@/lib/pipeline-forecast";
-import { generateExecutiveAlerts, type ExecutiveAlert } from "@/lib/executive-alerts";
+import { generateExecutiveAlerts, isPipelineExecutionAlert, type ExecutiveAlert } from "@/lib/executive-alerts";
+import type { CompanyHealthFlag } from "@/lib/company-intelligence";
 import type { BrokerRecord, CompanyRecord, ProjectRecord, ContractRecord, ReminderRecord } from "@/lib/supabase-server";
 
 // The full-column inquiry shape used by executive analytics — extends the
@@ -417,13 +418,18 @@ export type ExecutiveSummary = {
   recommendedActions: Array<{ priority: "high" | "medium" | "low"; action: string; relatedEntityId?: string }>;
 };
 
+// pipelineAlerts is deliberately NOT the full executive alert list: this
+// summary describes pipeline execution, so its caller filters company
+// relationship alerts out via isPipelineExecutionAlert(). The complete,
+// unfiltered set stays on ExecutiveIntelligenceReport.executiveAlerts for the
+// Executive Alerts panel, which remains the full view of executive risk.
 const generateExecutiveSummary = (
   kpis: ExecutiveKpis,
   pipeline: PipelineIntelligence,
   brokerIntelligence: BrokerIntelligence,
-  alerts: ExecutiveAlert[],
+  pipelineAlerts: ExecutiveAlert[],
 ): ExecutiveSummary => {
-  const criticalAndHigh = alerts.filter((alert) => alert.severity === "critical" || alert.severity === "high");
+  const criticalAndHigh = pipelineAlerts.filter((alert) => alert.severity === "critical" || alert.severity === "high");
   const stalledShare = kpis.activeProjects > 0 ? pipeline.stalledDeals.length / kpis.activeProjects : 0;
 
   let status: ExecutiveSummary["pipelineHealth"]["status"] = "steady";
@@ -434,7 +440,10 @@ const generateExecutiveSummary = (
     status,
     note:
       status === "at_risk"
-        ? `${pipeline.stalledDeals.length} of ${kpis.activeProjects} active projects are stalled and ${criticalAndHigh.length} high-severity alerts are open — the pipeline needs management attention.`
+        // "pipeline alerts", not "alerts": this count excludes company
+        // relationship alerts, which the Executive Alerts panel still counts.
+        // Without the qualifier the two numbers look like a contradiction.
+        ? `${pipeline.stalledDeals.length} of ${kpis.activeProjects} active projects are stalled and ${criticalAndHigh.length} high-severity pipeline alerts are open — the pipeline needs management attention.`
         : status === "strong"
           ? `Win rate is ${kpis.winRate}% with only ${pipeline.stalledDeals.length} stalled deal(s) — the pipeline is moving well.`
           : `Pipeline is steady: ${kpis.activeProjects} active projects, ${pipeline.stalledDeals.length} stalled, ${kpis.winRate}% win rate.`,
@@ -444,7 +453,7 @@ const generateExecutiveSummary = (
     .slice(0, 5)
     .map((alert) => ({ alertId: alert.id, note: `${alert.reason} (${alert.entityLabel})` }));
 
-  const nearTermOpportunities = alerts
+  const nearTermOpportunities = pipelineAlerts
     .filter((alert) => alert.type === "ready_for_introduction")
     .slice(0, 5)
     .map((alert) => ({ entityId: alert.entityId, entityLabel: alert.entityLabel, note: alert.reason }));
@@ -471,7 +480,7 @@ const generateExecutiveSummary = (
   if (pipeline.stalledDeals.length > 0) {
     recommendedActions.push({ priority: "high", action: `Review ${pipeline.stalledDeals.length} stalled project(s) with no recent activity.` });
   }
-  const unassignedHighPriorityAlerts = alerts.filter((alert) => alert.type === "high_priority_unassigned");
+  const unassignedHighPriorityAlerts = pipelineAlerts.filter((alert) => alert.type === "high_priority_unassigned");
   if (unassignedHighPriorityAlerts.length > 0) {
     recommendedActions.push({ priority: "high", action: `Assign a broker to ${unassignedHighPriorityAlerts.length} high-priority inquiry(ies) with no broker.` });
   }
@@ -481,7 +490,7 @@ const generateExecutiveSummary = (
   if (brokerIntelligence.unassigned.activeDeals > 0) {
     recommendedActions.push({ priority: "medium", action: `${brokerIntelligence.unassigned.activeDeals} active project(s) have no broker assigned.` });
   }
-  const expiringContracts = alerts.filter((alert) => alert.type === "contract_expiring");
+  const expiringContracts = pipelineAlerts.filter((alert) => alert.type === "contract_expiring");
   if (expiringContracts.length > 0) {
     recommendedActions.push({ priority: "medium", action: `${expiringContracts.length} contract(s) are expiring soon and may need renewal.` });
   }
@@ -512,6 +521,10 @@ export const computeExecutiveIntelligence = (input: {
   projects: ProjectRecord[];
   contracts: ContractRecord[];
   reminders: ReminderRecord[];
+  // Passed straight through to generateExecutiveAlerts(). Scored upstream by
+  // lib/company-intelligence.ts so this aggregator adds no company rules of
+  // its own; omitting it yields exactly the previous deal-only alert set.
+  companyHealthFlags?: CompanyHealthFlag[];
   now?: Date;
   stalledThresholdDays?: number;
 }): ExecutiveIntelligenceReport => {
@@ -528,9 +541,16 @@ export const computeExecutiveIntelligence = (input: {
     projects: input.projects,
     contracts: input.contracts,
     stalledDeals: pipeline.stalledDeals,
+    companyHealthFlags: input.companyHealthFlags,
     now,
   });
-  const summary = generateExecutiveSummary(kpis, pipeline, brokerMetrics, executiveAlerts);
+  // executiveAlerts (returned below, and rendered by the Executive Alerts
+  // panel) stays the complete view of executive risk, company relationships
+  // included. The summary sees only pipeline-execution alerts, so its
+  // pipeline verdict and top risks describe deal execution and are never
+  // moved by relationship health. One filter, one classifier — the alert
+  // rules themselves are not duplicated or re-evaluated.
+  const summary = generateExecutiveSummary(kpis, pipeline, brokerMetrics, executiveAlerts.filter(isPipelineExecutionAlert));
 
   return {
     generatedAt: now.toISOString(),
