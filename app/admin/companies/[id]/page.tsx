@@ -82,8 +82,12 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
   // health card) instead of the desk-wide arrays app/admin/activity/page.tsx
   // passes. No new queries, no second activity engine. brokers/adminUsers
   // are intentionally passed as [] — those event types (broker roster,
-  // team roster) aren't associated with any single company. inquiryHistory
-  // is also passed as [] — see the Stage 5.3.1C completion report for why.
+  // team roster) aren't associated with any single company. inquiryHistory is
+  // also passed as [], so per-field inquiry edits show on /admin/activity but
+  // not here: fetching them would need getInquiryHistory() once per related
+  // inquiry (an N+1 on a page that otherwise has a fixed query count), or the
+  // row-capped desk-wide getRecentInquiryHistoryServer(). Deferred rather than
+  // solved — see docs/phase-5.3-stage-5.3.1-company-intelligence.md.
   const timelineEvents = buildActivityFeed({
     inquiries: relatedInquiries,
     inquiryHistory: [],
