@@ -15,10 +15,12 @@ import {
 import { formatValue, formatDate, formatStatusLabel, normalizePriorityValue } from "@/lib/inquiry-helpers";
 import { formatProjectStageLabel, projectStageStyles } from "@/lib/project-helpers";
 import { formatContractStatusLabel, contractStatusStyles } from "@/lib/contract-helpers";
-import { computeCompanyHealth } from "@/lib/company-intelligence";
+import { computeCompanyHealth, computeCompanyBriefing } from "@/lib/company-intelligence";
+import type { CompanyIntelligenceInput } from "@/lib/company-intelligence";
 import { buildActivityFeed } from "@/lib/activity-helpers";
 import CompanyForm from "./company-form";
 import CompanyHealthCard from "../../_components/company-health-card";
+import CompanyBriefingCard from "../../_components/company-briefing-card";
 import CompanyTimeline from "../../_components/company-timeline";
 import CompanyContacts from "../../_components/company-contacts";
 import SupportRequestCard from "../../_components/support-request-card";
@@ -52,10 +54,13 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
   const relatedContracts = contracts.filter((contract) => contract.company_id === id);
 
   // Reuses the already-fetched/filtered arrays above — no duplicate queries
-  // or recomputation of business rules. computeCompanyHealth is the
-  // deterministic engine built in Stage 5.3.1A; this page only assembles
-  // its input and renders the result via CompanyHealthCard.
-  const health = computeCompanyHealth({
+  // or recomputation of business rules. computeCompanyHealth and
+  // computeCompanyBriefing are the deterministic engines built in Stage
+  // 5.3.1A; this page only assembles their input and renders the results.
+  // The input object is assembled once and shared by both calls, and the
+  // briefing is derived from the health report already computed here rather
+  // than from a second evaluation of the same rules.
+  const intelligenceInput: CompanyIntelligenceInput = {
     company,
     contacts,
     inquiries: relatedInquiries,
@@ -66,7 +71,10 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
     documents,
     emails,
     dealMatches,
-  });
+  };
+
+  const health = computeCompanyHealth(intelligenceInput);
+  const briefing = computeCompanyBriefing(intelligenceInput, health);
 
   // Reuses buildActivityFeed() exactly as-is (lib/activity-helpers.ts,
   // unmodified) — filtering by company is achieved by feeding it
@@ -110,6 +118,8 @@ export default async function CompanyDetailPage({ params }: { params: Promise<{ 
 
         <div className="space-y-4">
           <CompanyHealthCard health={health} />
+
+          <CompanyBriefingCard briefing={briefing} />
 
           <CompanyTimeline events={timelineEvents} />
 

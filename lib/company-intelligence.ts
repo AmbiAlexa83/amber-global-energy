@@ -437,3 +437,102 @@ export function computeCompanyBriefing(input: CompanyIntelligenceInput, health: 
 
   return { summary, highlights };
 }
+
+// ─── Portfolio rollup ───────────────────────────────────────────────────────
+// Scores every company in one pass (Phase 5.3, Stage 5.3.3). This adds no
+// new rules and no second scoring engine: it groups desk-wide arrays by
+// company once, then delegates each company to the same
+// computeCompanyHealth() the profile page already calls, so a company's
+// directory badge and its profile card can never disagree.
+//
+// Callers pass desk-wide arrays fetched once (one query per entity type, not
+// one per company). Grouping is O(rows), so cost scales with total rows
+// rather than companies × rows.
+
+export type CompanyPortfolioInput = {
+  companies: CompanyRecord[];
+  contacts: CompanyContactRecord[];
+  inquiries: InquiryRecord[];
+  projects: ProjectRecord[];
+  contracts: ContractRecord[];
+  supportRequests: SupportRequestRecord[];
+  reminders: ReminderRecord[];
+  documents: DocumentRecord[];
+  emails: EmailRecord[];
+  dealMatches: DealMatchRecord[];
+};
+
+// Buckets rows by their company_id, skipping rows with no company link.
+const groupByCompany = <T extends { company_id: string | null }>(rows: T[]): Map<string, T[]> => {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    if (!row.company_id) continue;
+    const bucket = grouped.get(row.company_id);
+    if (bucket) bucket.push(row);
+    else grouped.set(row.company_id, [row]);
+  }
+  return grouped;
+};
+
+// Deal matches are the one input not keyed by a single company_id — a company
+// can sit on either side of a match, so a row is filed under both. Mirrors
+// the both-columns lookup in getDealMatchesForCompanyServer().
+const groupDealMatchesByCompany = (matches: DealMatchRecord[]): Map<string, DealMatchRecord[]> => {
+  const grouped = new Map<string, DealMatchRecord[]>();
+  const file = (companyId: string | null, match: DealMatchRecord) => {
+    if (!companyId) return;
+    const bucket = grouped.get(companyId);
+    if (bucket) bucket.push(match);
+    else grouped.set(companyId, [match]);
+  };
+  for (const match of matches) {
+    file(match.buyer_company_id, match);
+    if (match.seller_company_id !== match.buyer_company_id) file(match.seller_company_id, match);
+  }
+  return grouped;
+};
+
+// Keyed by company id, matching the plain-Record convention the company
+// directory page already uses for its inquiry counts.
+export function computeCompanyPortfolioHealth(
+  input: CompanyPortfolioInput,
+  rules: CompanyHealthRules = COMPANY_HEALTH_RULES,
+  now: Date = new Date(),
+): Record<string, CompanyHealthReport> {
+  const contactsByCompany = groupByCompany(input.contacts);
+  const projectsByCompany = groupByCompany(input.projects);
+  const contractsByCompany = groupByCompany(input.contracts);
+  const supportRequestsByCompany = groupByCompany(input.supportRequests);
+  const remindersByCompany = groupByCompany(input.reminders);
+  const documentsByCompany = groupByCompany(input.documents);
+  const emailsByCompany = groupByCompany(input.emails);
+  const dealMatchesByCompany = groupDealMatchesByCompany(input.dealMatches);
+
+  const reports: Record<string, CompanyHealthReport> = {};
+
+  for (const company of input.companies) {
+    reports[company.id] = computeCompanyHealth(
+      {
+        company,
+        contacts: contactsByCompany.get(company.id) ?? [],
+        // public.inquiries has no company_id column, so inquiries are matched
+        // by name via the shared helper above rather than grouped by key.
+        inquiries: matchInquiriesToCompany(input.inquiries, company),
+        projects: projectsByCompany.get(company.id) ?? [],
+        contracts: contractsByCompany.get(company.id) ?? [],
+        supportRequests: supportRequestsByCompany.get(company.id) ?? [],
+        reminders: remindersByCompany.get(company.id) ?? [],
+        documents: documentsByCompany.get(company.id) ?? [],
+        emails: emailsByCompany.get(company.id) ?? [],
+        dealMatches: dealMatchesByCompany.get(company.id) ?? [],
+      },
+      rules,
+      // Passed explicitly so every company in one render is scored against
+      // the same instant — otherwise the per-company default new Date() would
+      // drift across the loop and make time-based rules non-reproducible.
+      now,
+    );
+  }
+
+  return reports;
+}

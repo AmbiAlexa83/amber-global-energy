@@ -1208,6 +1208,30 @@ export async function getRecentDocumentsServer(limit = 50): Promise<DocumentReco
   return (data ?? []) as DocumentRecord[];
 }
 
+// Desk-wide, unlimited fetch (Phase 5.3, Stage 5.3.3) — same convention as
+// getAllRemindersServer()/getAllCompanyContactsServer(). Distinct from
+// getRecentDocumentsServer() above, whose limit exists to cap an activity
+// feed: portfolio health scoring reads the newest interaction per company,
+// so a desk-wide row cap would silently make older-but-active companies
+// look inactive. Returns DocumentRecord (no signed URLs) — unlike
+// getDocumentsForEntityServer below, which signs each row for download.
+export async function getAllDocumentsServer(): Promise<DocumentRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("documents")
+    .select(DOCUMENT_SELECT)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as DocumentRecord[];
+}
+
 export async function getDocumentsForEntityServer(links: EntityLinks): Promise<DocumentWithUrl[]> {
   if (!supabaseServer) {
     throw new Error("Supabase service role key is not configured on the server.");
@@ -1357,6 +1381,27 @@ export async function getRecentEmailsServer(limit = 50): Promise<EmailRecord[]> 
     .select(EMAIL_SELECT)
     .order("created_at", { ascending: false })
     .limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as EmailRecord[];
+}
+
+// Desk-wide, unlimited fetch (Phase 5.3, Stage 5.3.3) — same rationale as
+// getAllDocumentsServer() above: the limit on getRecentEmailsServer() is an
+// activity-feed concern, and applying it to health scoring would misreport
+// last-interaction dates for companies outside the newest N rows.
+export async function getAllEmailsServer(): Promise<EmailRecord[]> {
+  if (!supabaseServer) {
+    throw new Error("Supabase service role key is not configured on the server.");
+  }
+
+  const { data, error } = await supabaseServer
+    .from("emails")
+    .select(EMAIL_SELECT)
+    .order("created_at", { ascending: false });
 
   if (error) {
     throw new Error(error.message);

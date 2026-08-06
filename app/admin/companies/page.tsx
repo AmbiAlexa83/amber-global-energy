@@ -1,7 +1,19 @@
 import Link from "next/link";
-import { getCompaniesServer, getInquiriesServer } from "@/lib/supabase-server";
+import {
+  getCompaniesServer,
+  getInquiriesServer,
+  getAllCompanyContactsServer,
+  getProjectsServer,
+  getContractsServer,
+  getSupportRequestsServer,
+  getAllRemindersServer,
+  getAllDocumentsServer,
+  getAllEmailsServer,
+  getDealMatchesServer,
+} from "@/lib/supabase-server";
 import { normalizeStatusValue, CLOSED_STATUSES } from "@/lib/inquiry-helpers";
-import CompanyRoster from "./company-roster";
+import { computeCompanyPortfolioHealth } from "@/lib/company-intelligence";
+import CompanyRoster, { type CompanyHealthSummary } from "./company-roster";
 
 // Live admin data (company directory + inquiry counts) must never be
 // statically prerendered at build time — this route has no dynamic segment
@@ -9,7 +21,52 @@ import CompanyRoster from "./company-roster";
 export const dynamic = "force-dynamic";
 
 export default async function CompaniesPage() {
-  const [companies, inquiries] = await Promise.all([getCompaniesServer(), getInquiriesServer()]);
+  // One query per entity type for the whole desk — never one per company.
+  // computeCompanyPortfolioHealth() groups these in memory, so adding a
+  // company adds no queries. The health inputs are individually try/caught:
+  // the directory is a working CRM screen first, so a failure in one health
+  // input degrades that column rather than taking the roster down with it.
+  const [companies, inquiries, contacts, projects, contracts, supportRequests, reminders, documents, emails, dealMatches] =
+    await Promise.all([
+      getCompaniesServer(),
+      getInquiriesServer(),
+      getAllCompanyContactsServer().catch(() => []),
+      getProjectsServer().catch(() => []),
+      getContractsServer().catch(() => []),
+      getSupportRequestsServer().catch(() => []),
+      getAllRemindersServer().catch(() => []),
+      getAllDocumentsServer().catch(() => []),
+      getAllEmailsServer().catch(() => []),
+      getDealMatchesServer().catch(() => []),
+    ]);
+
+  // Same defensive posture as /admin/activity's buildActivityFeed() call —
+  // a surprise in one row's shape must not 500 the whole directory.
+  let healthByCompanyId: Record<string, CompanyHealthSummary> = {};
+  try {
+    const reports = computeCompanyPortfolioHealth({
+      companies,
+      contacts,
+      inquiries,
+      projects,
+      contracts,
+      supportRequests,
+      reminders,
+      documents,
+      emails,
+      dealMatches,
+    });
+
+    // Only the level and the leading reason cross to the client component —
+    // the full reports carry every flag and metric for all companies, which
+    // the directory never renders. The profile page remains the place that
+    // shows the whole report.
+    healthByCompanyId = Object.fromEntries(
+      Object.entries(reports).map(([companyId, report]) => [companyId, { level: report.level, reason: report.reasons[0] }]),
+    );
+  } catch {
+    healthByCompanyId = {};
+  }
 
   const inquiryCounts: Record<string, { active: number; total: number }> = {};
   for (const inquiry of inquiries) {
@@ -42,7 +99,7 @@ export default async function CompaniesPage() {
           </p>
         </header>
 
-        <CompanyRoster initialCompanies={companies} inquiryCounts={inquiryCounts} />
+        <CompanyRoster initialCompanies={companies} inquiryCounts={inquiryCounts} healthByCompanyId={healthByCompanyId} />
       </div>
     </main>
   );

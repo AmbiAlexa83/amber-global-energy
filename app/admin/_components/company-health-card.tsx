@@ -1,23 +1,15 @@
 import { getRelativeTime } from "@/lib/inquiry-helpers";
-import type { CompanyHealthReport, CompanyHealthLevel } from "@/lib/company-intelligence";
+import type { CompanyHealthReport } from "@/lib/company-intelligence";
+import CompanyHealthBadge from "./company-health-badge";
 
 // Presentation only — every value rendered here comes directly from
 // computeCompanyHealth()'s output (lib/company-intelligence.ts). This
 // component performs no business-rule evaluation of its own: no threshold
 // checks, no status comparisons, no re-derivation of level/reasons/flags.
 // Server-rendered (no "use client") — read-only, no local state.
-
-const healthLevelStyles: Record<CompanyHealthLevel, string> = {
-  healthy: "border-emerald-400/35 bg-emerald-400/12 text-emerald-200",
-  attention_needed: "border-[#C8A24D]/35 bg-[#C8A24D]/12 text-[#F0D38A]",
-  at_risk: "border-rose-400/35 bg-rose-400/12 text-rose-200",
-};
-
-const healthLevelLabels: Record<CompanyHealthLevel, string> = {
-  healthy: "Healthy",
-  attention_needed: "Attention Needed",
-  at_risk: "At Risk",
-};
+//
+// The level badge moved to CompanyHealthBadge in Stage 5.3.3 when the company
+// directory needed the same mapping; the rendered markup is unchanged.
 
 // Matches the severityStyles convention already used in
 // app/admin/_components/executive-alerts-panel.tsx for ExecutiveAlert —
@@ -64,11 +56,7 @@ export default function CompanyHealthCard({ health }: { health: CompanyHealthRep
     <div className="rounded-[24px] border border-white/10 bg-[#071A2D]/90 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Company Health</p>
-        <span
-          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] ${healthLevelStyles[level]}`}
-        >
-          {healthLevelLabels[level]}
-        </span>
+        <CompanyHealthBadge level={level} className="px-3 py-1.5 text-xs font-semibold" />
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

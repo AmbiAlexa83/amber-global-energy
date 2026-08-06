@@ -4,6 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { CompanyRecord } from "@/lib/supabase-server";
+import type { CompanyHealthLevel } from "@/lib/company-intelligence";
+import CompanyHealthBadge from "../_components/company-health-badge";
+
+// The directory shows only the level and its leading reason; the full health
+// report stays on the company profile page. Scored server-side by
+// computeCompanyPortfolioHealth() — this component renders what it is handed
+// and evaluates no rules of its own.
+export type CompanyHealthSummary = { level: CompanyHealthLevel; reason: string };
 
 type NewCompanyDraft = {
   name: string;
@@ -27,9 +35,11 @@ const verificationBadgeClass = (status: string) => {
 export default function CompanyRoster({
   initialCompanies,
   inquiryCounts,
+  healthByCompanyId,
 }: {
   initialCompanies: CompanyRecord[];
   inquiryCounts: Record<string, { active: number; total: number }>;
+  healthByCompanyId: Record<string, CompanyHealthSummary>;
 }) {
   const router = useRouter();
   const [companies, setCompanies] = useState(initialCompanies);
@@ -205,6 +215,7 @@ export default function CompanyRoster({
                   <th className="px-3 py-2 font-medium">Country</th>
                   <th className="px-3 py-2 font-medium">Industry</th>
                   <th className="px-3 py-2 font-medium">Inquiries</th>
+                  <th className="px-3 py-2 font-medium">Health</th>
                   <th className="px-3 py-2 font-medium">Verification</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Actions</th>
@@ -213,6 +224,10 @@ export default function CompanyRoster({
               <tbody>
                 {companies.map((company) => {
                   const counts = inquiryCounts[company.name.trim().toLowerCase()] ?? { active: 0, total: 0 };
+                  // Absent for a company optimistically added to local state
+                  // by createCompany() — the router.refresh() it fires brings
+                  // the scored value in on the next server render.
+                  const health = healthByCompanyId[company.id];
                   const isEditing = editingId === company.id;
 
                   return (
@@ -249,6 +264,13 @@ export default function CompanyRoster({
                           </td>
                           <td className="px-3 py-3 text-slate-400">
                             {counts.active} active / {counts.total} total
+                          </td>
+                          <td className="px-3 py-3">
+                            {health ? (
+                              <CompanyHealthBadge level={health.level} className="px-2.5 py-1 text-xs" title={health.reason} />
+                            ) : (
+                              <span className="text-slate-500">—</span>
+                            )}
                           </td>
                           <td className="px-3 py-3">
                             <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.2em] ${verificationBadgeClass(company.verification_status)}`}>
@@ -288,6 +310,13 @@ export default function CompanyRoster({
                           <td className="px-3 py-3">{company.industry || "—"}</td>
                           <td className="px-3 py-3 text-slate-400">
                             {counts.active} active / {counts.total} total
+                          </td>
+                          <td className="px-3 py-3">
+                            {health ? (
+                              <CompanyHealthBadge level={health.level} className="px-2.5 py-1 text-xs" title={health.reason} />
+                            ) : (
+                              <span className="text-slate-500">—</span>
+                            )}
                           </td>
                           <td className="px-3 py-3">
                             <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.2em] ${verificationBadgeClass(company.verification_status)}`}>
