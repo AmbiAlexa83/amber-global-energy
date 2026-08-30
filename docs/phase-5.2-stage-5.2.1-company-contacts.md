@@ -133,6 +133,17 @@ control (which is `checkPermission` + the Basic Auth gate).
 **This migration has not been run as part of this task.** No `supabase db
 push` or SQL execution occurred.
 
+> **✅ PRODUCTION STATUS (verified 2026-08-30):** migration 013 **has since been
+> applied** to the production Supabase project `biudpxkpbxlbzbphyhmu`. Verified
+> by PostgREST schema introspection with a negative control — `company_contacts`
+> returns HTTP 200 and the `is_primary` column resolves, while a
+> known-nonexistent table returns HTTP 404 / `PGRST205`. Further confirmed
+> end-to-end: the Phase 5.2 / 5.3 Production Release Smoke Test read and wrote
+> live `company_contacts` data.
+>
+> The statement above is retained because it was accurate when written. This
+> note supersedes it for current state.
+
 ## Manual testing checklist
 
 - [ ] Run migration 013 in a non-production/staging Supabase project first.

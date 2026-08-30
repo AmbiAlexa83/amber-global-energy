@@ -243,16 +243,28 @@ history, and stage documents all already use the existing numbers.
 
 ---
 
-## Phase 5.3 — Company Intelligence (IMPLEMENTED, NOT DEPLOYED)
+## Phase 5.3 — Company Intelligence: **DEPLOYED, PRODUCTION-VERIFIED**
 
 Deterministic, explainable relationship health for every company, surfaced from
 the company profile up to the executive dashboard. Built on the
-`phase-5.2-executive-crm` branch.
+`phase-5.2-executive-crm` branch and released to Production together with
+Phase 5.2.
 
-- **Status**: implemented and committed locally; **not pushed, not deployed,
-  not verified in production.**
+- **Status**: **deployed to Production and verified.** Passed the Phase 5.2 /
+  5.3 Production Release Smoke Test (9/9, zero defects — see the release
+  record below).
+- **Release date**: 2026-08-30
+- **Production commit**: `23f709b` ("docs: complete Phase 5.3 Company
+  Intelligence documentation") — merged to `main` as a true fast-forward
+  (`8155340..23f709b`), so `main`'s tip is byte-identical to the validated
+  release commit.
+- **Pull request**: #1, merged 2026-08-29T21:39:00Z.
+- **Production deployment**: Vercel id `6160399974`, state `success`,
+  2026-08-29T21:39:44Z. Live at `https://www.amberglobalenergy.in` (HTTP 200;
+  `/admin` returns 401, Basic Auth perimeter enforced).
 - **Commits**: `13e4e21` (Stage 5.3.1, inside a WIP commit that also preserved
-  Phase 5.2 work), `d20552b` (Stages 5.3.2 + 5.3.3), `eb1d586` (Stage 5.3.4).
+  Phase 5.2 work), `d20552b` (Stages 5.3.2 + 5.3.3), `eb1d586` (Stage 5.3.4),
+  `23f709b` (Phase 5.3 documentation).
 - **Database migrations**: **none.** Phase 5.3 added no tables, columns,
   indexes, or migrations. Every metric and rule is derived at read time from
   data Phases 3–5.2 already capture. There is consequently no migration to run
@@ -307,16 +319,94 @@ the company profile up to the executive dashboard. Built on the
   project has no test harness, so every stage was verified manually and via
   `npm run build` / `npm run lint`.
 
-### Before this phase can be called released
+### Release gate — status at close-out
 
-None of the following has been done:
+The five conditions this section originally listed as outstanding:
 
-1. Push the branch and open/merge a PR.
-2. Deploy and verify `/admin`, `/admin/companies`, `/admin/companies/[id]`,
-   `/admin/activity`, and `/api/admin/executive-analytics` against real data.
-3. Walk each stage document's manual testing checklist on a non-production
-   environment.
-4. Confirm executive-dashboard load time is acceptable with the widened
-   `/api/admin/executive-analytics` fetch set.
-5. Full regression sweep of every existing Phase 3/4.1/5.1/5.2 route, following
-   the process used in every prior phase.
+1. ✅ **Push the branch and open/merge a PR** — PR #1, fast-forward merged.
+2. ✅ **Deploy and verify `/admin`, `/admin/companies`,
+   `/admin/companies/[id]`, `/admin/activity`, `/api/admin/executive-analytics`
+   against real data** — all covered by Preview validation Gates 1–6 and the
+   Production smoke test.
+3. ⚠️ **Partially met.** Read paths were walked exhaustively across seven
+   Preview gates; **write paths could not be walked on a non-production
+   environment** because Preview and Production share one Supabase project
+   (risk R1). This was accepted as risk R3 and discharged instead by the
+   Production smoke test. See "Accepted deviation" below.
+4. ⚠️ **Not meaningfully testable yet.** `/admin` loaded in ~3s, but against a
+   14-row dataset. The widened fetch set (11 desk-wide arrays) remains
+   unmeasured at scale — carried into backlog item ④.
+5. ✅ **Regression sweep** — Gate 6, scoped by evidence: every consumer of
+   every module Phase 5.3 modified was validated, and `/admin/customers/[id]`,
+   `lib/inquiry-helpers.ts` and the public site were diff-verified as
+   unmodified by either phase.
+
+### Accepted deviation: R3
+
+Phase 5.2's write paths shipped to Production **without pre-production
+execution**, because Preview and Production share one database and no isolated
+staging environment exists. This was consciously accepted, recorded before
+merge, and discharged by the smoke test below rather than waived. Establishing
+environment isolation (audit finding H4) is the prerequisite for not repeating
+this trade-off.
+
+### Phase 5.2 / 5.3 Production Release Smoke Test
+
+**Verdict: 9/9 PASS, zero defects.** Executed 2026-08-30, owner: release owner.
+This test verified **Phase 5.2's write paths** — it is *not* a Stage 5.3.1C
+test; Stage 5.3.1C (the Relationship Timeline) is read-only and was validated
+in Preview Gates 2, 4 and 6.
+
+| Step | Scope | Verdict |
+|---|---|---|
+| S1 | Activity Feed gained support-request + company-contact events | PASS |
+| S2 | Company directory Health column | PASS |
+| S3 | Executive alerts + summary scope split | PASS |
+| S4 | Support queue renders | PASS |
+| S5 | Support request created on `Test 2` (no contacts, by design) | PASS |
+| S6 | 1 `sent` internal alert + 1 `skipped` acknowledgment | PASS |
+| S7 | Internal alert received; `From: Amber Global Energy <support@…>` | PASS |
+| S8 | Status → `closed`; `support_closed` / `skipped` row; `resolved_at` stamped | PASS |
+| S9 | Full row reconciliation and integrity sweep | PASS |
+
+Evidence: Resend `provider_message_id` `2aaad80d-3574-4799-9507-ba504b94cab5`
+on the one real send. Final deltas against baseline — `support_requests` 3→4,
+`support_notifications` 0→3, `emails` 0→1; the other eleven tables unchanged.
+Integrity: zero `failed` rows, unique idempotency keys, zero orphans, zero
+collateral writes. The pre-existing urgent `Test 2` request was confirmed
+unmodified (`updated_at` 2026-08-03).
+
+Risks **R3** (Phase 5.2 write paths unverified) and **F7** (notification
+pipeline never executed) are **CLOSED** by this test.
+
+### Residual risks and observations — carried forward, not defects
+
+No defect was found in Phase 5.2 or Phase 5.3 across seven Preview gates and
+nine smoke-test steps. The following remain open and are deliberately retained:
+
+- **F9** — the client-facing status-email **`sent`** branch is unverified.
+  Every client-facing notification skipped by design, because `Test 2` has no
+  contacts. The send mechanism itself is proven (S6's internal alert traverses
+  the same `sendAndRecord()` → `sendTransactionalEmail()` path); only
+  client-recipient resolution on its success branch is untested.
+- **R6** — 3 of 6 health rules (`unverified_with_active_deals`,
+  `reminder_overdue`, `no_recent_activity`) remain unexercised. All are gated
+  on `projects` / `contracts` / `reminders`, which are empty in Production.
+- **R1** — Preview and Production share one Supabase project and one env-var
+  set. Email variables are deliberately **Production-scope only** so Preview
+  continues to fail safe.
+- **F8** — `logToEmailTimeline()` is best-effort and swallows its own errors, so
+  a notification can succeed while its Email Timeline entry silently fails.
+  Automated notifications now appear in company Email Timelines alongside
+  manually-logged entries, distinguished only by `logged_by: admin`.
+- **F1 / F3 / F4 / F5** — cosmetic and spec-conforming: directory tooltip shows
+  the first-evaluated rather than the level-driving reason; inquiry alerts are
+  labelled with the company name recorded on the inquiry (this caused two
+  misreadings during validation itself); *"unknown number of day(s)"* phrasing;
+  deal values render without a currency symbol. **F4 and F5 originate in
+  Phase 4.1, not 5.3.**
+- **R4** — 11 pre-existing lint errors, including `Date.now()` during render at
+  `app/page.tsx:180`. Predates this release; backlog item ③.
+- Two permanent `ZZ-TEST` / `TEST` support requests remain in Production.
+  Support requests have **no delete route** — closure is the only retirement
+  path, and both are closed or inert.

@@ -153,6 +153,20 @@ All access goes through `supabaseServer` (service-role key, bypasses RLS).
 
 **This migration has not been run as part of this task.**
 
+> **✅ PRODUCTION STATUS (verified 2026-08-30):** migration 014 **has since been
+> applied** to the production Supabase project `biudpxkpbxlbzbphyhmu`. Verified
+> by PostgREST schema introspection with a negative control — `support_requests`
+> returns HTTP 200 and the `priority` column resolves, while a
+> known-nonexistent table returns HTTP 404 / `PGRST205`.
+>
+> Confirmed end-to-end by the Phase 5.2 / 5.3 Production Release Smoke Test
+> (9/9 PASS): a support request was created in Production (`ZZ-TEST-20260829`,
+> `Test 2`), transitioned `new` → `closed`, and had `resolved_at` correctly
+> stamped — exercising the full status lifecycle this stage introduced.
+>
+> The statement above is retained because it was accurate when written. This
+> note supersedes it for current state.
+
 ## Manual testing checklist
 
 - [ ] Run migrations 013 and 014 in a staging Supabase project.

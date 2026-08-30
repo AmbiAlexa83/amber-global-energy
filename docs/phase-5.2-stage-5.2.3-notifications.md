@@ -332,6 +332,48 @@ bookkeeping versus a client-facing correspondence log.
 
 **None of the above was executed as part of this task.**
 
+> **✅ PRODUCTION STATUS (verified 2026-08-30):** all of the above **has since
+> been completed.**
+>
+> - **Migration 015 applied** to the production Supabase project
+>   `biudpxkpbxlbzbphyhmu`. Verified by PostgREST introspection with a negative
+>   control — `support_notifications` returns HTTP 200 and the
+>   `idempotency_key` column resolves.
+> - **`resend` dependency installed** (`resend@^4.8.0`).
+> - **Email variables configured in Vercel with `Production` scope only** —
+>   `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`, `SUPPORT_EMAIL`,
+>   `SUPPORT_NOTIFICATION_EMAIL`. Note this **differs from the instruction
+>   above**, which suggested Preview *and* Production: Preview and Production
+>   share one database, so Preview is deliberately left unconfigured to keep
+>   `isEmailProviderConfigured()` returning `false` there and preserve its
+>   fail-safe behaviour.
+> - **Sending domain `amberglobalenergy.in` verified in Resend** (DNS complete,
+>   "ready to send").
+> - `EMAIL_FROM_NAME` was set to `Amber Global Energy` (with spaces) to match
+>   the code default and the email template header.
+>
+> **Pipeline verified in Production** by the Phase 5.2 / 5.3 Production Release
+> Smoke Test (9/9 PASS, zero defects):
+>
+> | Branch | Result |
+> |---|---|
+> | `support_internal_alert` | **`sent`** — Resend `provider_message_id` `2aaad80d-3574-4799-9507-ba504b94cab5`, 335 ms; received at `support@amberglobalenergy.in` with `From: Amber Global Energy <support@amberglobalenergy.in>` |
+> | `support_acknowledgment` | **`skipped`** — *"No active company contact with an email address was available."* (test company deliberately has no contacts) |
+> | `support_closed` | **`skipped`** — same reason; idempotency key correctly shaped `{requestId}:{type}:{status}` |
+>
+> `logToEmailTimeline()` also wrote the expected `public.emails` row with
+> `from_address: support@amberglobalenergy.in`. Zero `failed` rows, zero
+> duplicates, zero orphans, and **no email reached any third party.**
+>
+> **Residual (F9, not a defect):** the client-facing status-email **`sent`**
+> branch is still unverified — every client-facing notification skipped by
+> design. The send mechanism is proven via the internal alert, which traverses
+> the same `sendAndRecord()` → `sendTransactionalEmail()` path; only
+> client-recipient resolution on its success branch is untested.
+>
+> The statement above is retained because it was accurate when written. This
+> note supersedes it for current state.
+
 ## Local testing checklist
 
 Performed live against the current dev database (migration 015 **not**
